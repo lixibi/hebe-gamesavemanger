@@ -1,0 +1,6 @@
+build/bin
+node_modules
+frontend/dist
+.DS_Store
+frontend/package.json.md5
+config/games.json

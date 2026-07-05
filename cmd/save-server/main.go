@@ -139,14 +139,15 @@ func (s *server) handleGames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".backups" && strings.TrimSpace(entry.Name()) != "" {
-			if _, ok := seen[entry.Name()]; !ok {
+		name := strings.TrimSpace(entry.Name())
+		if entry.IsDir() && isCloudGameDirectory(name) {
+			if _, ok := seen[name]; !ok {
 				cfg.Games = append(cfg.Games, cloudGameConfig{
-					ID:         entry.Name(),
-					Name:       entry.Name(),
-					FolderName: entry.Name(),
+					ID:         name,
+					Name:       name,
+					FolderName: name,
 				})
-				seen[entry.Name()] = struct{}{}
+				seen[name] = struct{}{}
 			}
 		}
 	}
@@ -847,6 +848,13 @@ func cleanName(name string) (string, error) {
 		return "", fmt.Errorf("invalid name: %s", name)
 	}
 	return name, nil
+}
+
+func isCloudGameDirectory(name string) bool {
+	if name == "" || strings.HasPrefix(name, ".") {
+		return false
+	}
+	return !strings.Contains(name, ".upload-") && !strings.Contains(name, ".replace-")
 }
 
 func safeName(input string) string {

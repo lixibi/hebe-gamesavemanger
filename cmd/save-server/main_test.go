@@ -89,6 +89,23 @@ func TestReplaceGameDirCanRestoreOldestKeptBackup(t *testing.T) {
 	}
 }
 
+func TestIsCloudGameDirectorySkipsTemporaryUploadDirectories(t *testing.T) {
+	cases := map[string]bool{
+		"bg3":              true,
+		".backups":         false,
+		".bg3.upload-123":  false,
+		".bg3.replace-123": false,
+		"bg3.upload-123":   false,
+		"bg3.replace-123":  false,
+		"":                 false,
+	}
+	for name, want := range cases {
+		if got := isCloudGameDirectory(name); got != want {
+			t.Fatalf("isCloudGameDirectory(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func writeTestFile(t *testing.T, root string, rel string, content string) {
 	t.Helper()
 	path := filepath.Join(root, rel)

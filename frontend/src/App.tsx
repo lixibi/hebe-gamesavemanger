@@ -508,30 +508,24 @@ function App() {
                         <span className={`status-pill ${appState?.cloudStatus ?? 'stopped'}`}>
                             {appState?.cloudStatus === 'running' ? '云端已连接' : '云端未连接'}
                         </span>
+                        <span className="cloud-count">{appState?.cloudGameCount ?? 0} 个游戏</span>
                         <button className="ghost compact icon-only" onClick={() => setCloudConfigOpen(true)} disabled={busy} title="云端配置">
                             <Settings size={15}/>
                         </button>
                     </div>
-                    <div className="cloud-facts">
-                        <span>地址</span>
-                        <strong>{appState?.cloudServerURL ?? '未设置'}</strong>
-                        <span>云端游戏</span>
-                        <strong>{appState?.cloudGameCount ?? 0} 个</strong>
-                        <span>同步情况</span>
-                        <strong>{cloudSummary.synced} 已同步 / {cloudSummary.attention} 需处理</strong>
-                    </div>
-                    <p>{appState?.cloudMessage ?? '正在读取状态'}</p>
+                    <details className="cloud-details">
+                        <summary>{cloudSummary.synced} 已同步 / {cloudSummary.attention} 需处理</summary>
+                        <div className="cloud-facts">
+                            <span>地址</span>
+                            <strong>{appState?.cloudServerURL ?? '未设置'}</strong>
+                            <span>状态</span>
+                            <strong>{appState?.cloudMessage ?? '正在读取状态'}</strong>
+                        </div>
+                    </details>
                 </div>
             </aside>
 
             <section className="workspace">
-                <header className="topbar">
-                    <button className="ghost" onClick={() => refresh()} disabled={busy} title="刷新状态">
-                        <RefreshCw size={17}/>
-                        刷新
-                    </button>
-                </header>
-
                 {(notice || error) && (
                     <div className={`banner ${error ? 'error' : 'success'}`}>
                         {error || notice}
@@ -546,10 +540,15 @@ function App() {
                                 <span>{selectedStatus?.message ?? '选择一个游戏查看差异'}</span>
                             </div>
                             {selectedStatus && (
-                                <button className="ghost compact" onClick={editSelectedGame} disabled={busy} title="编辑游戏配置">
-                                    <Pencil size={16}/>
-                                    编辑
-                                </button>
+                                <div className="title-actions">
+                                    <button className="ghost compact icon-only" onClick={() => refresh()} disabled={busy} title="刷新状态">
+                                        <RefreshCw size={16}/>
+                                    </button>
+                                    <button className="ghost compact" onClick={editSelectedGame} disabled={busy} title="编辑游戏配置">
+                                        <Pencil size={16}/>
+                                        编辑
+                                    </button>
+                                </div>
                             )}
                         </div>
 
@@ -560,13 +559,10 @@ function App() {
                                     <strong>{selectedStatus.localOnly + selectedStatus.cloudOnly + selectedStatus.changed}</strong>
                                 </div>
 
-                                <div className="metrics">
-                                    <Metric label="本地文件" value={selectedStatus.localFiles}/>
-                                    <Metric label="云端文件" value={selectedStatus.cloudFiles}/>
-                                    <Metric label="本地新增" value={selectedStatus.localOnly}/>
-                                    <Metric label="云端新增" value={selectedStatus.cloudOnly}/>
-                                    <Metric label="内容变化" value={selectedStatus.changed}/>
-                                    <Metric label="新旧判断" value={sideLabels[selectedStatus.lastChangeSide] ?? '无法判断'}/>
+                                <div className="status-brief">
+                                    <span>本地 {selectedStatus.localFiles}</span>
+                                    <span>云端 {selectedStatus.cloudFiles}</span>
+                                    <span>{sideLabels[selectedStatus.lastChangeSide] ?? '无法判断'}</span>
                                 </div>
 
                                 <div className="latest-summary">
@@ -613,8 +609,10 @@ function App() {
                                 </section>
 
                                 <details className="details-block">
-                                    <summary>路径与判断详情</summary>
+                                    <summary>更多详情</summary>
                                     <div className="path-block">
+                                        <span>差异</span>
+                                        <p>本地新增 {selectedStatus.localOnly} · 云端新增 {selectedStatus.cloudOnly} · 内容变化 {selectedStatus.changed}</p>
                                         <span>判断依据</span>
                                         <p>{selectedStatus.lastChangeReason || '内容一致'}{selectedStatus.lastChangePath ? `：${selectedStatus.lastChangePath}` : ''}</p>
                                         <span>本地</span>
@@ -772,25 +770,28 @@ function App() {
                                     </button>
                                 </div>
                             </label>
-                            <label>
-                                启动参数
-                                <input value={form.gameArgs || ''} onChange={(event) => setForm({...form, gameArgs: event.target.value})} placeholder="-windowed -noborder"/>
-                            </label>
-                            <label>
-                                自动上传
-                                <select value={form.autoUploadMode || 'manual'} onChange={(event) => setForm({...form, autoUploadMode: event.target.value})}>
-                                    <option value="manual">关闭自动上传，完全手动</option>
-                                    <option value="ask-on-exit">游戏关闭后询问上传</option>
-                                    <option value="on-exit">游戏关闭后自动上传</option>
-                                    <option value="interval">运行中定时上传</option>
-                                </select>
-                            </label>
-                            {form.autoUploadMode === 'interval' && (
+                            <details className="advanced-settings">
+                                <summary>高级设置</summary>
                                 <label>
-                                    上传间隔（分钟）
-                                    <input type="number" min="1" value={form.autoUploadIntervalMinutes || 5} onChange={(event) => setForm({...form, autoUploadIntervalMinutes: Number(event.target.value)})}/>
+                                    启动参数
+                                    <input value={form.gameArgs || ''} onChange={(event) => setForm({...form, gameArgs: event.target.value})} placeholder="-windowed -noborder"/>
                                 </label>
-                            )}
+                                <label>
+                                    自动上传
+                                    <select value={form.autoUploadMode || 'manual'} onChange={(event) => setForm({...form, autoUploadMode: event.target.value})}>
+                                        <option value="manual">关闭自动上传，完全手动</option>
+                                        <option value="ask-on-exit">游戏关闭后询问上传</option>
+                                        <option value="on-exit">游戏关闭后自动上传</option>
+                                        <option value="interval">运行中定时上传</option>
+                                    </select>
+                                </label>
+                                {form.autoUploadMode === 'interval' && (
+                                    <label>
+                                        上传间隔（分钟）
+                                        <input type="number" min="1" value={form.autoUploadIntervalMinutes || 5} onChange={(event) => setForm({...form, autoUploadIntervalMinutes: Number(event.target.value)})}/>
+                                    </label>
+                                )}
+                            </details>
                         </div>
 
                         <div className="modal-actions">
@@ -807,15 +808,6 @@ function App() {
                 </div>
             )}
         </main>
-    );
-}
-
-function Metric({label, value}: { label: string; value: string | number }) {
-    return (
-        <div className="metric">
-            <span>{label}</span>
-            <strong>{value}</strong>
-        </div>
     );
 }
 

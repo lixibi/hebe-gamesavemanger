@@ -76,8 +76,6 @@ button {
 
 .brand span,
 .panel-title span,
-.topbar p,
-.metric span,
 .path-block span,
 .game-row small,
 .cloud-service p {
@@ -184,30 +182,9 @@ button {
     padding: 14px 16px;
 }
 
-.topbar {
-    min-height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 18px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--line);
-}
-
-.topbar p {
-    margin: 0 0 4px;
-}
-
-.topbar strong {
-    display: block;
-    max-width: min(880px, 68vw);
-    overflow-wrap: anywhere;
-    font-size: 14px;
-}
-
 .status-area {
     max-width: 920px;
-    padding-top: 14px;
+    padding-top: 0;
 }
 
 .panel {
@@ -232,6 +209,12 @@ button {
     font-size: 20px;
     line-height: 1.18;
     overflow-wrap: anywhere;
+}
+
+.title-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .editor {
@@ -420,14 +403,31 @@ button:disabled {
 .cloud-service-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 8px;
+}
+
+.cloud-service-head .icon-only {
+    margin-left: auto;
+}
+
+.cloud-count {
+    color: #b9bbbf;
+    font-size: 12px;
 }
 
 .cloud-service p {
     margin: 0;
     line-height: 1.4;
     overflow-wrap: anywhere;
+}
+
+.cloud-details summary,
+.advanced-settings summary {
+    cursor: pointer;
+    color: #b9bbbf;
+    font-size: 12px;
+    font-weight: 700;
 }
 
 .cloud-facts {
@@ -537,27 +537,23 @@ button:disabled {
     color: #8c2424;
 }
 
-.metrics {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 7px;
-    margin: 10px 0;
+.status-brief {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0 10px;
 }
 
-.metric {
-    min-height: 50px;
-    display: grid;
-    align-content: center;
-    gap: 4px;
-    padding: 8px 9px;
+.status-brief span {
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 8px;
     border: 1px solid var(--line);
-    border-radius: 7px;
-    background: #fffaf1;
-}
-
-.metric strong {
-    font-size: 15px;
-    overflow-wrap: anywhere;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.72);
+    color: #4d5159;
+    font-size: 12px;
 }
 
 .latest-summary {
@@ -686,7 +682,7 @@ button:disabled {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 12px;
+    margin-top: 10px;
 }
 
 .empty {
@@ -858,6 +854,18 @@ button:disabled {
     gap: 12px;
 }
 
+.advanced-settings {
+    padding-top: 2px;
+}
+
+.advanced-settings summary {
+    color: #4b4f58;
+}
+
+.advanced-settings label {
+    margin-top: 10px;
+}
+
 .path-input-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 36px;
@@ -873,24 +881,12 @@ button:disabled {
         min-height: auto;
     }
 
-    .topbar {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .topbar strong {
-        max-width: 100%;
-    }
 }
 
 @media (max-width: 620px) {
     .workspace,
     .sidebar {
         padding: 16px;
-    }
-
-    .metrics {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .latest-summary {
@@ -900,7 +896,8 @@ button:disabled {
     .panel-title,
     .actions,
     .modal-head,
-    .modal-actions {
+    .modal-actions,
+    .title-actions {
         align-items: stretch;
         flex-direction: column;
     }

@@ -729,7 +729,7 @@ function App() {
                         <div className="modal-head">
                             <div>
                                 <h3>{selectedId ? '编辑游戏' : '新增游戏'}</h3>
-                                <p>配置本地存档目录、云端游戏文件夹和游戏 exe 路径。</p>
+                                <p>配置本地存档目录、云端游戏文件夹和启动目标。</p>
                             </div>
                             <button className="ghost compact" type="button" onClick={importGameConfig} disabled={busy}>
                                 <FileUp size={15}/>
@@ -756,9 +756,9 @@ function App() {
                                 </div>
                             </label>
                             <label>
-                                游戏 exe 路径
+                                启动目标
                                 <div className="path-input-row">
-                                    <input value={form.gameExePath} onChange={(event) => setForm({...form, gameExePath: event.target.value})} placeholder="D:\\Games\\Game\\game.exe"/>
+                                    <input value={form.gameExePath} onChange={(event) => setForm({...form, gameExePath: event.target.value})} placeholder="D:\\Games\\Game\\game.exe 或 steam://rungameid/1086940"/>
                                     <button className="ghost compact icon-only" type="button" onClick={pickGameExe} disabled={busy} title="选择游戏程序">
                                         <FolderOpen size={16}/>
                                     </button>

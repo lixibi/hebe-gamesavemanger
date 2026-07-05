@@ -338,6 +338,15 @@ func TestSyncGameRejectsNestedSourceAndDestination(t *testing.T) {
 	}
 }
 
+func TestSteamLaunchTargetIsRecognizedAsURL(t *testing.T) {
+	if !isURLTarget("steam://rungameid/1086940") {
+		t.Fatal("expected steam launch target to be recognized as URL")
+	}
+	if isURLTarget(filepath.Join("Games", "Game", "game.exe")) {
+		t.Fatal("expected normal executable path not to be recognized as URL")
+	}
+}
+
 func writeTestFile(t *testing.T, path string, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

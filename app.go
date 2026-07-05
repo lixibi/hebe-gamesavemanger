@@ -319,6 +319,10 @@ func (a *App) LaunchGame(id string) error {
 		return errors.New("game executable path is empty")
 	}
 
+	if isURLTarget(game.GameExePath) {
+		return openExternalTarget(game.GameExePath, game.GameArgs)
+	}
+
 	cmd := launchCommandWithArgs(game.GameExePath, game.GameArgs)
 	if err := cmd.Start(); err != nil {
 		return err
@@ -475,6 +479,9 @@ func (a *App) OpenGamePath(id string, target string) error {
 	case "game":
 		if strings.TrimSpace(game.GameExePath) == "" {
 			return errors.New("game executable path is empty")
+		}
+		if isURLTarget(game.GameExePath) {
+			return errors.New("URL launch target has no local game directory")
 		}
 		path = filepath.Dir(game.GameExePath)
 	default:
@@ -1670,6 +1677,26 @@ func launchCommandWithArgs(exePath string, args string) *exec.Cmd {
 	return cmd
 }
 
+func openExternalTarget(target string, args string) error {
+	if strings.TrimSpace(target) == "" {
+		return errors.New("target is empty")
+	}
+	parts := append([]string{target}, parseArgs(args)...)
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		startArgs := []string{"/C", "start", ""}
+		startArgs = append(startArgs, parts...)
+		cmd = exec.Command("cmd", startArgs...)
+	case "darwin":
+		cmd = exec.Command("open", parts...)
+	default:
+		cmd = exec.Command("xdg-open", target)
+	}
+	hideCommandWindow(cmd)
+	return cmd.Start()
+}
+
 func parseArgs(input string) []string {
 	var args []string
 	var current strings.Builder
@@ -1699,6 +1726,9 @@ func openPath(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("path is empty")
 	}
+	if isURLTarget(path) {
+		return openExternalTarget(path, "")
+	}
 	if _, err := os.Stat(path); err != nil {
 		return err
 	}
@@ -1714,6 +1744,17 @@ func openPath(path string) error {
 	}
 	hideCommandWindow(cmd)
 	return cmd.Start()
+}
+
+func isURLTarget(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" {
+		return false
+	}
+	if len(parsed.Scheme) == 1 && runtime.GOOS == "windows" {
+		return false
+	}
+	return true
 }
 
 func samePath(left string, right string) bool {

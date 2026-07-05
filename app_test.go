@@ -360,6 +360,82 @@ func TestAutoUploadBacksUpCloudOnlyOncePerSession(t *testing.T) {
 	}
 }
 
+func TestLocalSessionPersistsFileChangeAcrossRestart(t *testing.T) {
+	root := t.TempDir()
+	app := newTestApp(t, root)
+	game := GameConfig{
+		ID:            "track",
+		Name:          "Track",
+		FolderName:    "track",
+		LocalSavePath: filepath.Join(root, "local", "track"),
+	}
+	writeTestFile(t, filepath.Join(game.LocalSavePath, "slot.sav"), "before")
+
+	session, err := app.newAutoUploadSession(game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(game.LocalSavePath, "slot.sav"), "after")
+	if err := app.observeLocalSessionChange(session); err != nil {
+		t.Fatal(err)
+	}
+	if !session.localChanged {
+		t.Fatal("expected local file change to be detected")
+	}
+
+	restarted := newTestApp(t, root)
+	state, err := restarted.loadLocalSessionState(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.LocalChanged {
+		t.Fatal("expected local change state to survive app restart")
+	}
+	resumed, err := restarted.newAutoUploadSession(game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resumed.localChanged {
+		t.Fatal("expected resumed session to keep pending local change")
+	}
+}
+
+func TestStatusUsesTrackedLocalChangeWhenModTimeIsAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	app := newTestApp(t, root)
+	game := GameConfig{
+		ID:            "tracked-status",
+		Name:          "Tracked Status",
+		FolderName:    "tracked-status",
+		LocalSavePath: filepath.Join(root, "local", "tracked-status"),
+	}
+	localPath := filepath.Join(game.LocalSavePath, "slot.sav")
+	cloudPath := filepath.Join(app.cloudSavePath(game), "slot.sav")
+	writeTestFile(t, localPath, "before")
+	session, err := app.newAutoUploadSession(game)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeTestFile(t, localPath, "local-after")
+	writeTestFile(t, cloudPath, "cloud-other")
+	sameTime := time.Now()
+	if err := os.Chtimes(localPath, sameTime, sameTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cloudPath, sameTime, sameTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.observeLocalSessionChange(session); err != nil {
+		t.Fatal(err)
+	}
+
+	status := app.statusForGame(game)
+	if status.LastChangeSide != "local" {
+		t.Fatalf("expected tracked local change to break ambiguous diff, got %+v", status)
+	}
+}
+
 func TestSyncGamePreservesEmptyDirectories(t *testing.T) {
 	root := t.TempDir()
 	app := newTestApp(t, root)

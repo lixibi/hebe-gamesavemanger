@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,7 @@ type App struct {
 	dataDir      string
 	backupDir    string
 	iconCacheDir string
+	sessionDir   string
 	autoSessions map[string]chan struct{}
 	autoLock     sync.Mutex
 }
@@ -140,6 +142,20 @@ type freshnessEvidence struct {
 type autoUploadSession struct {
 	game          GameConfig
 	cloudBackedUp bool
+	statePath     string
+	baseline      directorySnapshot
+	localChanged  bool
+	lastObserved  string
+}
+
+type localSessionState struct {
+	GameID        string            `json:"gameId"`
+	StartedAt     string            `json:"startedAt"`
+	LastObserved  string            `json:"lastObserved"`
+	LocalChanged  bool              `json:"localChanged"`
+	CloudBackedUp bool              `json:"cloudBackedUp"`
+	Files         map[string]string `json:"files"`
+	Dirs          []string          `json:"dirs"`
 }
 
 func NewApp() *App {
@@ -154,6 +170,7 @@ func newAppAt(root string) *App {
 		dataDir:      filepath.Join(root, "data"),
 		backupDir:    filepath.Join(root, "backups"),
 		iconCacheDir: filepath.Join(root, "cache", "icons"),
+		sessionDir:   filepath.Join(root, "cache", "sessions"),
 		autoSessions: map[string]chan struct{}{},
 	}
 }
@@ -578,6 +595,7 @@ func (a *App) ensureLayout() error {
 		a.dataDir,
 		a.backupDir,
 		a.iconCacheDir,
+		a.sessionDir,
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -730,6 +748,13 @@ func (a *App) statusForGame(game GameConfig) GameStatus {
 	status.LastChangeSide = diff.NewerSide
 	status.LastChangeReason = diff.Reason
 	status.LastChangePath = diff.ReasonPath
+	if (diff.LocalOnly > 0 || diff.CloudOnly > 0 || diff.Changed > 0) && a.localSessionShowsCurrentLocalChanged(game) {
+		if status.LastChangeSide == "" || status.LastChangeSide == "unknown" {
+			status.LastChangeSide = "local"
+			status.LastChangeReason = "本地存档目录在游戏启动后发生文件变化"
+			status.LastChangePath = ""
+		}
+	}
 	status.State, status.Message = describeDiff(status)
 	return status
 }
@@ -1186,6 +1211,11 @@ func (a *App) startAutoUploadSession(game GameConfig, cmd *exec.Cmd) {
 		go func() { _ = cmd.Wait() }()
 		return
 	}
+	session, err := a.newAutoUploadSession(game)
+	if err != nil {
+		go func() { _ = cmd.Wait() }()
+		return
+	}
 
 	done := make(chan struct{})
 	a.autoLock.Lock()
@@ -1210,7 +1240,6 @@ func (a *App) startAutoUploadSession(game GameConfig, cmd *exec.Cmd) {
 			close(processDone)
 		}()
 
-		session := &autoUploadSession{game: game}
 		interval := time.Duration(game.AutoUploadIntervalMinutes) * time.Minute
 		if interval < time.Minute {
 			interval = time.Minute
@@ -1224,32 +1253,42 @@ func (a *App) startAutoUploadSession(game GameConfig, cmd *exec.Cmd) {
 				case <-done:
 					return
 				case <-ticker.C:
+					_ = a.observeLocalSessionChange(session)
 					_ = a.autoUploadIfLocalNewer(session)
 				case <-processDone:
+					_ = a.observeLocalSessionChange(session)
 					_ = a.autoUploadIfLocalNewer(session)
 					return
 				}
 			}
 		}
 
-		select {
-		case <-done:
-			return
-		case <-processDone:
-			if game.AutoUploadMode == "on-exit" {
-				_ = a.autoUploadIfLocalNewer(session)
+		monitorTicker := time.NewTicker(30 * time.Second)
+		defer monitorTicker.Stop()
+		for {
+			select {
+			case <-done:
 				return
-			}
-			if game.AutoUploadMode == "ask-on-exit" {
-				a.promptUploadIfLocalNewer(game)
+			case <-monitorTicker.C:
+				_ = a.observeLocalSessionChange(session)
+			case <-processDone:
+				_ = a.observeLocalSessionChange(session)
+				if game.AutoUploadMode == "on-exit" {
+					_ = a.autoUploadIfLocalNewer(session)
+					return
+				}
+				if game.AutoUploadMode == "ask-on-exit" {
+					a.promptUploadIfLocalNewer(session)
+				}
+				return
 			}
 		}
 	}()
 }
 
-func (a *App) promptUploadIfLocalNewer(game GameConfig) {
-	status := a.statusForGame(game)
-	if status.LastChangeSide != "local" && status.State != "missing-cloud" {
+func (a *App) promptUploadIfLocalNewer(session *autoUploadSession) {
+	status := a.statusForGame(session.game)
+	if !session.localChanged && status.LastChangeSide != "local" && status.State != "missing-cloud" {
 		return
 	}
 	if a.ctx != nil {
@@ -1258,8 +1297,11 @@ func (a *App) promptUploadIfLocalNewer(game GameConfig) {
 }
 
 func (a *App) autoUploadIfLocalNewer(session *autoUploadSession) error {
+	if err := a.observeLocalSessionChange(session); err != nil {
+		return err
+	}
 	status := a.statusForGame(session.game)
-	if status.LastChangeSide != "local" && status.State != "missing-cloud" {
+	if !session.localChanged && status.LastChangeSide != "local" && status.State != "missing-cloud" {
 		return nil
 	}
 	backup := !session.cloudBackedUp
@@ -1267,7 +1309,136 @@ func (a *App) autoUploadIfLocalNewer(session *autoUploadSession) error {
 		return err
 	}
 	session.cloudBackedUp = true
+	session.localChanged = false
+	if snapshot, err := scanDirectorySnapshot(session.game.LocalSavePath); err == nil {
+		session.baseline = snapshot
+	}
+	_ = a.saveLocalSessionState(session)
 	return nil
+}
+
+func (a *App) newAutoUploadSession(game GameConfig) (*autoUploadSession, error) {
+	snapshot, err := scanDirectorySnapshot(game.LocalSavePath)
+	if err != nil {
+		return nil, err
+	}
+	session := &autoUploadSession{
+		game:         game,
+		statePath:    a.localSessionPath(game.ID),
+		baseline:     snapshot,
+		lastObserved: time.Now().Format(time.RFC3339),
+	}
+	if state, err := a.loadLocalSessionState(game.ID); err == nil {
+		session.cloudBackedUp = state.CloudBackedUp
+		if state.LocalChanged {
+			session.baseline = state.toSnapshot()
+			session.localChanged = true
+		} else {
+			session.baseline = state.toSnapshot()
+		}
+	}
+	if err := a.saveLocalSessionState(session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func (a *App) observeLocalSessionChange(session *autoUploadSession) error {
+	current, err := scanDirectorySnapshot(session.game.LocalSavePath)
+	if err != nil {
+		return err
+	}
+	if err := verifySnapshotsEqual(session.baseline, current, "session-start", "local-now"); err != nil {
+		session.localChanged = true
+	}
+	session.lastObserved = time.Now().Format(time.RFC3339)
+	return a.saveLocalSessionState(session)
+}
+
+func (a *App) saveLocalSessionState(session *autoUploadSession) error {
+	if err := os.MkdirAll(a.sessionDir, 0o755); err != nil {
+		return err
+	}
+	if strings.TrimSpace(session.statePath) == "" {
+		session.statePath = a.localSessionPath(session.game.ID)
+	}
+	state := localSessionState{
+		GameID:        session.game.ID,
+		StartedAt:     time.Now().Format(time.RFC3339),
+		LastObserved:  firstNonEmpty(session.lastObserved, time.Now().Format(time.RFC3339)),
+		LocalChanged:  session.localChanged,
+		CloudBackedUp: session.cloudBackedUp,
+		Files:         snapshotFileTokens(session.baseline),
+		Dirs:          snapshotDirs(session.baseline),
+	}
+	raw, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(session.statePath, append(raw, '\n'), 0o644)
+}
+
+func (a *App) loadLocalSessionState(gameID string) (localSessionState, error) {
+	raw, err := os.ReadFile(a.localSessionPath(gameID))
+	if err != nil {
+		return localSessionState{}, err
+	}
+	var state localSessionState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return localSessionState{}, err
+	}
+	return state, nil
+}
+
+func (a *App) localSessionShowsCurrentLocalChanged(game GameConfig) bool {
+	state, err := a.loadLocalSessionState(game.ID)
+	if err != nil || !state.LocalChanged {
+		return false
+	}
+	current, err := scanDirectorySnapshot(game.LocalSavePath)
+	if err != nil {
+		return false
+	}
+	return verifySnapshotsEqual(state.toSnapshot(), current, "session-start", "local-now") != nil
+}
+
+func (a *App) localSessionPath(gameID string) string {
+	return filepath.Join(a.sessionDir, safeName(gameID)+".json")
+}
+
+func (state localSessionState) toSnapshot() directorySnapshot {
+	files := map[string]fileInfo{}
+	for path, token := range state.Files {
+		parts := strings.Split(token, "|")
+		if len(parts) != 3 {
+			continue
+		}
+		size, _ := strconv.ParseInt(parts[1], 10, 64)
+		modTime, _ := time.Parse(time.RFC3339Nano, parts[2])
+		files[path] = fileInfo{Hash: parts[0], Size: size, ModTime: modTime}
+	}
+	dirs := map[string]struct{}{}
+	for _, dir := range state.Dirs {
+		dirs[dir] = struct{}{}
+	}
+	return directorySnapshot{Files: files, Dirs: dirs}
+}
+
+func snapshotFileTokens(snapshot directorySnapshot) map[string]string {
+	tokens := map[string]string{}
+	for path, file := range snapshot.Files {
+		tokens[path] = fmt.Sprintf("%s|%d|%s", file.Hash, file.Size, file.ModTime.Format(time.RFC3339Nano))
+	}
+	return tokens
+}
+
+func snapshotDirs(snapshot directorySnapshot) []string {
+	dirs := make([]string, 0, len(snapshot.Dirs))
+	for dir := range snapshot.Dirs {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	return dirs
 }
 
 func backupInfo(path string) (BackupInfo, error) {

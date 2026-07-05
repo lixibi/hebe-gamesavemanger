@@ -710,9 +710,9 @@ function App() {
                             </div>
                             {selectedStatus && (
                                 <div className="title-actions">
-                                    <button className="ghost compact" onClick={editSelectedGame} disabled={busy} title="编辑游戏配置">
+                                    <button className="ghost compact" onClick={editSelectedGame} disabled={busy} title="详细设置">
                                         <Pencil size={16}/>
-                                        编辑
+                                        详细设置
                                     </button>
                                 </div>
                             )}

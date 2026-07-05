@@ -828,6 +828,73 @@ button:disabled {
     justify-content: flex-start;
 }
 
+.transfer-toast {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 35;
+    width: min(360px, calc(100vw - 36px));
+}
+
+.transfer-card {
+    display: grid;
+    gap: 10px;
+    padding: 13px;
+    border: 1px solid rgba(38, 42, 49, 0.14);
+    border-radius: 8px;
+    background: #fffefa;
+    color: var(--ink);
+    box-shadow: 0 20px 60px rgba(20, 22, 26, 0.24);
+}
+
+.transfer-head {
+    display: grid;
+    gap: 3px;
+}
+
+.transfer-head strong {
+    font-size: 14px;
+}
+
+.transfer-head span,
+.transfer-foot {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.progress-track {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e9e4da;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--teal), var(--blue));
+    transition: width 180ms ease;
+}
+
+.transfer-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.transfer-foot span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.transfer-foot strong {
+    color: var(--ink);
+    font-size: 12px;
+}
+
 .context-menu {
     position: fixed;
     z-index: 30;

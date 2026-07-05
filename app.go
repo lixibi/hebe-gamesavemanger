@@ -129,6 +129,18 @@ type CompareEntry struct {
 	NewerSide     string `json:"newerSide"`
 }
 
+type TransferProgress struct {
+	GameID       string `json:"gameId"`
+	GameName     string `json:"gameName"`
+	Direction    string `json:"direction"`
+	Phase        string `json:"phase"`
+	Message      string `json:"message"`
+	CurrentBytes int64  `json:"currentBytes"`
+	TotalBytes   int64  `json:"totalBytes"`
+	CurrentPath  string `json:"currentPath"`
+	Done         bool   `json:"done"`
+}
+
 type fileInfo struct {
 	Hash    string
 	Size    int64
@@ -1035,11 +1047,32 @@ func (a *App) downloadCloudToTemp(game GameConfig) (string, func(), error) {
 
 func (a *App) uploadLocalToCloud(game GameConfig, backup bool) (string, error) {
 	if a.cloudBaseURL() == "local" {
+		a.emitTransferProgress(TransferProgress{GameID: game.ID, GameName: game.Name, Direction: "local-to-cloud", Phase: "copy", Message: "正在复制到本地云目录"})
+		defer a.emitTransferProgress(TransferProgress{GameID: game.ID, GameName: game.Name, Direction: "local-to-cloud", Phase: "done", Message: "上传完成", Done: true})
 		return a.replaceDirectoryWithBackup(a.cloudSavePath(game), game.LocalSavePath, game.ID, "auto-upload", backup)
 	}
+	localManifest, err := scanDirectory(game.LocalSavePath)
+	if err != nil {
+		return "", err
+	}
+	_, totalBytes, _, _ := manifestStats(localManifest)
+	a.emitTransferProgress(TransferProgress{GameID: game.ID, GameName: game.Name, Direction: "local-to-cloud", Phase: "pack", Message: "正在打包本地存档", TotalBytes: totalBytes})
 	reader, writer := io.Pipe()
 	go func() {
-		err := writeTarGz(writer, game.LocalSavePath)
+		var sent int64
+		err := writeTarGzWithProgress(writer, game.LocalSavePath, func(delta int64, rel string) {
+			sent += delta
+			a.emitTransferProgress(TransferProgress{
+				GameID:       game.ID,
+				GameName:     game.Name,
+				Direction:    "local-to-cloud",
+				Phase:        "upload",
+				Message:      "正在上传本地存档",
+				CurrentBytes: sent,
+				TotalBytes:   totalBytes,
+				CurrentPath:  rel,
+			})
+		})
 		_ = writer.CloseWithError(err)
 	}()
 	req, err := http.NewRequest(http.MethodPut, a.cloudGameURL(game, "/archive"), reader)
@@ -1062,9 +1095,19 @@ func (a *App) uploadLocalToCloud(game GameConfig, backup bool) (string, error) {
 		return "", err
 	}
 	if payload.Backup == "" || !backup {
-		return "", a.verifyCloudMatchesLocal(game)
+		err := a.verifyCloudMatchesLocal(game)
+		a.emitTransferProgress(TransferProgress{GameID: game.ID, GameName: game.Name, Direction: "local-to-cloud", Phase: "done", Message: "上传完成", CurrentBytes: totalBytes, TotalBytes: totalBytes, Done: true})
+		return "", err
 	}
-	return "cloud:" + payload.Backup, a.verifyCloudMatchesLocal(game)
+	err = a.verifyCloudMatchesLocal(game)
+	a.emitTransferProgress(TransferProgress{GameID: game.ID, GameName: game.Name, Direction: "local-to-cloud", Phase: "done", Message: "上传完成", CurrentBytes: totalBytes, TotalBytes: totalBytes, Done: true})
+	return "cloud:" + payload.Backup, err
+}
+
+func (a *App) emitTransferProgress(progress TransferProgress) {
+	if a.ctx != nil {
+		wailsruntime.EventsEmit(a.ctx, "transfer-progress", progress)
+	}
 }
 
 func (a *App) verifyCloudMatchesLocal(game GameConfig) error {
@@ -1868,6 +1911,10 @@ func copyFile(src string, dst string, mode os.FileMode) error {
 }
 
 func writeTarGz(writer io.Writer, root string) error {
+	return writeTarGzWithProgress(writer, root, nil)
+}
+
+func writeTarGzWithProgress(writer io.Writer, root string, progress func(delta int64, rel string)) error {
 	gz := gzip.NewWriter(writer)
 	defer gz.Close()
 	tw := tar.NewWriter(gz)
@@ -1892,7 +1939,8 @@ func writeTarGz(writer io.Writer, root string) error {
 		if err != nil {
 			return err
 		}
-		header.Name = filepath.ToSlash(rel)
+		relSlash := filepath.ToSlash(rel)
+		header.Name = relSlash
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
@@ -1903,13 +1951,44 @@ func writeTarGz(writer io.Writer, root string) error {
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(tw, file)
+		_, copyErr := copyWithProgress(tw, file, relSlash, progress)
 		closeErr := file.Close()
 		if copyErr != nil {
 			return copyErr
 		}
 		return closeErr
 	})
+}
+
+func copyWithProgress(dst io.Writer, src io.Reader, rel string, progress func(delta int64, rel string)) (int64, error) {
+	if progress == nil {
+		return io.Copy(dst, src)
+	}
+	buffer := make([]byte, 256*1024)
+	var written int64
+	for {
+		nr, readErr := src.Read(buffer)
+		if nr > 0 {
+			nw, writeErr := dst.Write(buffer[:nr])
+			if nw > 0 {
+				delta := int64(nw)
+				written += delta
+				progress(delta, rel)
+			}
+			if writeErr != nil {
+				return written, writeErr
+			}
+			if nr != nw {
+				return written, io.ErrShortWrite
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return written, nil
+			}
+			return written, readErr
+		}
+	}
 }
 
 func extractTarGz(reader io.Reader, dst string) error {

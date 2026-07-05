@@ -59,6 +59,18 @@ type ContextMenuState = {
     status: main.GameStatus;
 };
 
+type TransferProgress = {
+    gameId: string;
+    gameName: string;
+    direction: string;
+    phase: string;
+    message: string;
+    currentBytes: number;
+    totalBytes: number;
+    currentPath: string;
+    done: boolean;
+};
+
 const emptyGame: main.GameConfig = {
     id: '',
     name: '',
@@ -106,6 +118,7 @@ function App() {
     const [passwordChangeOpen, setPasswordChangeOpen] = useState(false);
     const [activityLog, setActivityLog] = useState<string[]>(['等待操作']);
     const [compareResult, setCompareResult] = useState<main.CompareResult | null>(null);
+    const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
 
     const selectedStatus = useMemo(() => {
         return appState?.games?.find((item) => item.game.id === selectedId) ?? null;
@@ -151,6 +164,16 @@ function App() {
                 ],
             });
             appendLog(`${status.game.name} 已关闭，本地存档较新`);
+        });
+    }, []);
+
+    useEffect(() => {
+        return EventsOn('transfer-progress', (payload: TransferProgress) => {
+            const progress = payload;
+            setTransferProgress(progress);
+            if (progress.done) {
+                window.setTimeout(() => setTransferProgress(null), 900);
+            }
         });
     }, []);
 
@@ -255,6 +278,18 @@ function App() {
     }
 
     async function syncDirection(id: string, direction: 'cloud-to-local' | 'local-to-cloud', launchAfter: boolean) {
+        const gameName = selectedStatus?.game.name ?? id;
+        setTransferProgress({
+            gameId: id,
+            gameName,
+            direction,
+            phase: direction === 'local-to-cloud' ? 'upload' : 'download',
+            message: direction === 'local-to-cloud' ? '准备上传本地存档' : '准备下载云端存档',
+            currentBytes: 0,
+            totalBytes: 0,
+            currentPath: '',
+            done: false,
+        });
         await run(() => SyncGame(id, direction), async (result) => {
             const state = await GetAppState();
             setAppState(state);
@@ -269,6 +304,7 @@ function App() {
             setNotice(result.backupPath ? `覆盖完成，原目录已备份到 ${result.backupPath}${launchText}` : `覆盖完成${launchText}`);
             appendLog(direction === 'cloud-to-local' ? '已下载云端到本地' : '已上传本地到云端');
         });
+        window.setTimeout(() => setTransferProgress(null), 1400);
     }
 
     function requestDelete() {
@@ -740,6 +776,24 @@ function App() {
                 </div>
             )}
 
+            {transferProgress && (
+                <div className="transfer-toast">
+                    <div className="transfer-card">
+                        <div className="transfer-head">
+                            <strong>{transferProgress.gameName || '存档传输'}</strong>
+                            <span>{transferProgress.message || '正在处理'}</span>
+                        </div>
+                        <div className="progress-track">
+                            <div className="progress-fill" style={{width: `${transferPercent(transferProgress)}%`}}/>
+                        </div>
+                        <div className="transfer-foot">
+                            <span>{transferProgress.currentPath || (transferProgress.done ? '完成' : '准备中')}</span>
+                            <strong>{transferPercent(transferProgress)}%</strong>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {cloudConfigOpen && (
                 <div className="modal-backdrop">
                     <div className="modal cloud-config-modal">
@@ -905,6 +959,16 @@ function compareSideLabel(side: string) {
         return '云端较新';
     }
     return '时间接近';
+}
+
+function transferPercent(progress: TransferProgress) {
+    if (progress.done) {
+        return 100;
+    }
+    if (!progress.totalBytes || progress.totalBytes <= 0) {
+        return progress.currentBytes > 0 ? 12 : 4;
+    }
+    return Math.max(4, Math.min(99, Math.round((progress.currentBytes / progress.totalBytes) * 100)));
 }
 
 function cloudStatusLabel(status?: string) {

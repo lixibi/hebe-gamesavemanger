@@ -339,6 +339,10 @@ func (s *server) handleCreateBackup(w http.ResponseWriter, game string) {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
+	if err := s.pruneBackups(game); err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
 	backups, _ := s.listBackups(game)
 	writeJSON(w, map[string]any{"name": name, "backups": backups})
 }
@@ -381,10 +385,16 @@ func (s *server) replaceGameDir(game string, src string, reason string) (string,
 	dst := s.gameDir(game)
 	backup := ""
 	if info, err := os.Stat(dst); err == nil && info.IsDir() {
-		var backupErr error
-		backup, backupErr = s.backupGame(game, reason)
-		if backupErr != nil {
-			return "", backupErr
+		manifest, scanErr := scanDirectory(dst)
+		if scanErr != nil {
+			return "", scanErr
+		}
+		if manifest.FileCount > 0 || manifest.DirCount > 0 {
+			var backupErr error
+			backup, backupErr = s.backupGame(game, reason)
+			if backupErr != nil {
+				return "", backupErr
+			}
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -425,9 +435,6 @@ func (s *server) backupGame(game string, reason string) (string, error) {
 	if err := copyDirectoryVerified(src, dst); err != nil {
 		return "", err
 	}
-	if err := s.pruneBackups(game); err != nil {
-		return "", err
-	}
 	return name, nil
 }
 
@@ -463,6 +470,9 @@ func (s *server) listBackups(game string) ([]backupInfo, error) {
 		})
 	}
 	sort.Slice(backups, func(i, j int) bool {
+		if backups[i].CreatedAt == backups[j].CreatedAt {
+			return backups[i].Name > backups[j].Name
+		}
 		return backups[i].CreatedAt > backups[j].CreatedAt
 	})
 	return backups, nil

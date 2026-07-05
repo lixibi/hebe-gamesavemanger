@@ -53,7 +53,9 @@ type fileInfo struct {
 type manifestResponse struct {
 	Game           string              `json:"game"`
 	Files          map[string]fileInfo `json:"files"`
+	Dirs           []string            `json:"dirs"`
 	FileCount      int                 `json:"fileCount"`
+	DirCount       int                 `json:"dirCount"`
 	Bytes          int64               `json:"bytes"`
 	LatestModified string              `json:"latestModified"`
 	LatestPath     string              `json:"latestPath"`
@@ -66,6 +68,11 @@ type backupInfo struct {
 	Bytes          int64  `json:"bytes"`
 	LatestModified string `json:"latestModified"`
 	LatestPath     string `json:"latestPath"`
+}
+
+type directorySnapshot struct {
+	Files map[string]fileInfo
+	Dirs  map[string]struct{}
 }
 
 func main() {
@@ -386,13 +393,21 @@ func (s *server) replaceGameDir(game string, src string, reason string) (string,
 	stage := filepath.Join(s.root, "."+game+".replace-"+strconv.FormatInt(time.Now().UnixNano(), 10))
 	_ = os.RemoveAll(stage)
 	defer os.RemoveAll(stage)
-	if err := copyDirectory(src, stage); err != nil {
+	if err := copyDirectoryVerified(src, stage); err != nil {
 		return "", err
 	}
 	if err := os.RemoveAll(dst); err != nil {
 		return "", err
 	}
 	if err := os.Rename(stage, dst); err != nil {
+		return "", err
+	}
+	if err := verifyDirectoriesEqual(src, dst); err != nil {
+		if backup != "" {
+			backupPath := filepath.Join(s.gameBackupDir(game), backup)
+			_ = os.RemoveAll(dst)
+			_ = copyDirectoryVerified(backupPath, dst)
+		}
 		return "", err
 	}
 	return backup, s.pruneBackups(game)
@@ -407,7 +422,7 @@ func (s *server) backupGame(game string, reason string) (string, error) {
 	}
 	name := backupName(reason)
 	dst := filepath.Join(s.gameBackupDir(game), name)
-	if err := copyDirectory(src, dst); err != nil {
+	if err := copyDirectoryVerified(src, dst); err != nil {
 		return "", err
 	}
 	if err := s.pruneBackups(game); err != nil {
@@ -540,6 +555,7 @@ func scanDirectory(root string) (manifestResponse, error) {
 	}
 
 	files := map[string]fileInfo{}
+	dirs := []string{}
 	var bytes int64
 	var latest time.Time
 	latestPath := ""
@@ -548,6 +564,13 @@ func scanDirectory(root string) (manifestResponse, error) {
 			return walkErr
 		}
 		if d.IsDir() {
+			if path != root {
+				rel, err := filepath.Rel(root, path)
+				if err != nil {
+					return err
+				}
+				dirs = append(dirs, filepath.ToSlash(rel))
+			}
 			return nil
 		}
 		info, err := d.Info()
@@ -579,6 +602,7 @@ func scanDirectory(root string) (manifestResponse, error) {
 	if err != nil {
 		return manifestResponse{}, err
 	}
+	sort.Strings(dirs)
 
 	latestModified := ""
 	if !latest.IsZero() {
@@ -587,7 +611,9 @@ func scanDirectory(root string) (manifestResponse, error) {
 	return manifestResponse{
 		Game:           filepath.Base(root),
 		Files:          files,
+		Dirs:           dirs,
 		FileCount:      len(files),
+		DirCount:       len(dirs),
 		Bytes:          bytes,
 		LatestModified: latestModified,
 		LatestPath:     latestPath,
@@ -631,9 +657,12 @@ func writeTarGz(w io.Writer, root string) error {
 		if err != nil {
 			return err
 		}
-		defer file.Close()
-		_, err = io.Copy(tw, file)
-		return err
+		_, copyErr := io.Copy(tw, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
 	})
 }
 
@@ -724,6 +753,61 @@ func copyDirectory(src string, dst string) error {
 		}
 		return os.Chtimes(target, info.ModTime(), info.ModTime())
 	})
+}
+
+func copyDirectoryVerified(src string, dst string) error {
+	if err := copyDirectory(src, dst); err != nil {
+		return err
+	}
+	return verifyDirectoriesEqual(src, dst)
+}
+
+func verifyDirectoriesEqual(left string, right string) error {
+	leftSnapshot, err := scanDirectorySnapshot(left)
+	if err != nil {
+		return err
+	}
+	rightSnapshot, err := scanDirectorySnapshot(right)
+	if err != nil {
+		return err
+	}
+	if len(leftSnapshot.Dirs) != len(rightSnapshot.Dirs) {
+		return fmt.Errorf("directory count differs: %s has %d, %s has %d", left, len(leftSnapshot.Dirs), right, len(rightSnapshot.Dirs))
+	}
+	for dir := range leftSnapshot.Dirs {
+		if _, ok := rightSnapshot.Dirs[dir]; !ok {
+			return fmt.Errorf("directory missing after copy: %s", dir)
+		}
+	}
+	if len(leftSnapshot.Files) != len(rightSnapshot.Files) {
+		return fmt.Errorf("file count differs: %s has %d, %s has %d", left, len(leftSnapshot.Files), right, len(rightSnapshot.Files))
+	}
+	for path, leftFile := range leftSnapshot.Files {
+		rightFile, ok := rightSnapshot.Files[path]
+		if !ok {
+			return fmt.Errorf("file missing after copy: %s", path)
+		}
+		if leftFile.Size != rightFile.Size || leftFile.Hash != rightFile.Hash {
+			return fmt.Errorf("file content differs after copy: %s", path)
+		}
+	}
+	return nil
+}
+
+func scanDirectorySnapshot(root string) (directorySnapshot, error) {
+	manifest, err := scanDirectory(root)
+	if err != nil {
+		return directorySnapshot{}, err
+	}
+	files := map[string]fileInfo{}
+	for path, file := range manifest.Files {
+		files[path] = file
+	}
+	dirs := map[string]struct{}{}
+	for _, dir := range manifest.Dirs {
+		dirs[dir] = struct{}{}
+	}
+	return directorySnapshot{Files: files, Dirs: dirs}, nil
 }
 
 func hashFile(path string) (string, error) {

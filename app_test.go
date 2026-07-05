@@ -326,6 +326,20 @@ func TestSyncGamePreservesEmptyDirectories(t *testing.T) {
 	}
 }
 
+func TestSnapshotVerificationDetectsEmptyDirectoryMismatch(t *testing.T) {
+	left := directorySnapshot{
+		Files: map[string]fileInfo{},
+		Dirs:  map[string]struct{}{"empty-slot": {}},
+	}
+	right := directorySnapshot{
+		Files: map[string]fileInfo{},
+		Dirs:  map[string]struct{}{},
+	}
+	if err := verifySnapshotsEqual(left, right, "left", "right"); err == nil {
+		t.Fatal("expected empty directory mismatch to be detected")
+	}
+}
+
 func TestSyncGameRejectsNestedSourceAndDestination(t *testing.T) {
 	root := t.TempDir()
 	app := newTestApp(t, root)

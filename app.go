@@ -739,6 +739,7 @@ type cloudManifestResponse struct {
 		Size    int64  `json:"size"`
 		ModTime string `json:"modTime"`
 	} `json:"files"`
+	Dirs []string `json:"dirs"`
 }
 
 type cloudUploadResponse struct {
@@ -852,26 +853,34 @@ func (a *App) saveCloudGame(game GameConfig) error {
 }
 
 func (a *App) cloudManifest(game GameConfig) (map[string]fileInfo, error) {
+	snapshot, err := a.cloudSnapshot(game)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Files, nil
+}
+
+func (a *App) cloudSnapshot(game GameConfig) (directorySnapshot, error) {
 	if a.cloudBaseURL() == "local" {
-		return scanDirectory(a.cloudSavePath(game))
+		return scanDirectorySnapshot(a.cloudSavePath(game))
 	}
 	req, err := http.NewRequest(http.MethodGet, a.cloudGameURL(game, "/manifest"), nil)
 	if err != nil {
-		return nil, err
+		return directorySnapshot{}, err
 	}
 	a.authorizeCloudRequest(req)
 	client := http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return directorySnapshot{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("cloud server returned %s", resp.Status)
+		return directorySnapshot{}, fmt.Errorf("cloud server returned %s", resp.Status)
 	}
 	var payload cloudManifestResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
+		return directorySnapshot{}, err
 	}
 	files := map[string]fileInfo{}
 	for path, file := range payload.Files {
@@ -885,7 +894,11 @@ func (a *App) cloudManifest(game GameConfig) (map[string]fileInfo, error) {
 			ModTime: modTime,
 		}
 	}
-	return files, nil
+	dirs := map[string]struct{}{}
+	for _, dir := range payload.Dirs {
+		dirs[filepath.ToSlash(dir)] = struct{}{}
+	}
+	return directorySnapshot{Files: files, Dirs: dirs}, nil
 }
 
 func (a *App) downloadCloudToTemp(game GameConfig) (string, func(), error) {
@@ -954,9 +967,21 @@ func (a *App) uploadLocalToCloud(game GameConfig, backup bool) (string, error) {
 		return "", err
 	}
 	if payload.Backup == "" || !backup {
-		return "", nil
+		return "", a.verifyCloudMatchesLocal(game)
 	}
-	return "cloud:" + payload.Backup, nil
+	return "cloud:" + payload.Backup, a.verifyCloudMatchesLocal(game)
+}
+
+func (a *App) verifyCloudMatchesLocal(game GameConfig) error {
+	localSnapshot, err := scanDirectorySnapshot(game.LocalSavePath)
+	if err != nil {
+		return err
+	}
+	cloudSnapshot, err := a.cloudSnapshot(game)
+	if err != nil {
+		return err
+	}
+	return verifySnapshotsEqual(localSnapshot, cloudSnapshot, "local", "cloud")
 }
 
 func (a *App) cloudServerStatus(baseURL string) (string, string) {
@@ -1523,9 +1548,12 @@ func writeTarGz(writer io.Writer, root string) error {
 		if err != nil {
 			return err
 		}
-		defer file.Close()
-		_, err = io.Copy(tw, file)
-		return err
+		_, copyErr := io.Copy(tw, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
 	})
 }
 
@@ -1602,9 +1630,12 @@ func verifyDirectoriesEqual(left string, right string) error {
 	if err != nil {
 		return err
 	}
+	return verifySnapshotsEqual(leftSnapshot, rightSnapshot, left, right)
+}
 
+func verifySnapshotsEqual(leftSnapshot directorySnapshot, rightSnapshot directorySnapshot, leftName string, rightName string) error {
 	if len(leftSnapshot.Dirs) != len(rightSnapshot.Dirs) {
-		return fmt.Errorf("directory count differs: %s has %d, %s has %d", left, len(leftSnapshot.Dirs), right, len(rightSnapshot.Dirs))
+		return fmt.Errorf("directory count differs: %s has %d, %s has %d", leftName, len(leftSnapshot.Dirs), rightName, len(rightSnapshot.Dirs))
 	}
 	for dir := range leftSnapshot.Dirs {
 		if _, ok := rightSnapshot.Dirs[dir]; !ok {
@@ -1613,7 +1644,7 @@ func verifyDirectoriesEqual(left string, right string) error {
 	}
 
 	if len(leftSnapshot.Files) != len(rightSnapshot.Files) {
-		return fmt.Errorf("file count differs: %s has %d, %s has %d", left, len(leftSnapshot.Files), right, len(rightSnapshot.Files))
+		return fmt.Errorf("file count differs: %s has %d, %s has %d", leftName, len(leftSnapshot.Files), rightName, len(rightSnapshot.Files))
 	}
 	for path, leftFile := range leftSnapshot.Files {
 		rightFile, ok := rightSnapshot.Files[path]

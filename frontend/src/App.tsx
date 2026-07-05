@@ -925,20 +925,20 @@ function App() {
                                     </button>
                                 </div>
                             </label>
+                            <label>
+                                自动上传
+                                <select value={form.autoUploadMode || 'manual'} onChange={(event) => setForm({...form, autoUploadMode: event.target.value})}>
+                                    <option value="manual">关闭自动上传，完全手动</option>
+                                    <option value="ask-on-exit">游戏关闭后询问上传</option>
+                                    <option value="on-exit">游戏关闭后自动上传</option>
+                                    <option value="interval">运行中定时上传</option>
+                                </select>
+                            </label>
                             <details className="advanced-settings">
                                 <summary>高级设置</summary>
                                 <label>
                                     启动参数
                                     <input value={form.gameArgs || ''} onChange={(event) => setForm({...form, gameArgs: event.target.value})} placeholder="-windowed -noborder"/>
-                                </label>
-                                <label>
-                                    自动上传
-                                    <select value={form.autoUploadMode || 'manual'} onChange={(event) => setForm({...form, autoUploadMode: event.target.value})}>
-                                        <option value="manual">关闭自动上传，完全手动</option>
-                                        <option value="ask-on-exit">游戏关闭后询问上传</option>
-                                        <option value="on-exit">游戏关闭后自动上传</option>
-                                        <option value="interval">运行中定时上传</option>
-                                    </select>
                                 </label>
                                 {form.autoUploadMode === 'interval' && (
                                     <label>

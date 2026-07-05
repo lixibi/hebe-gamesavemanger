@@ -21,6 +21,7 @@ import {
 import './App.css';
 import {
     CompareGame,
+    CreateCloudBackup,
     CreateManualBackup,
     DeleteGame,
     ExportGameConfig,
@@ -28,10 +29,12 @@ import {
     ImportGameConfig,
     LaunchGame,
     ListBackups,
+    ListCloudBackups,
     OpenGamePath,
     PickGameExe,
     PickSaveDirectory,
     RestoreBackup,
+    RestoreCloudBackup,
     SaveCloudServerURL,
     SaveGame,
     SyncGame,
@@ -58,6 +61,8 @@ type ContextMenuState = {
     y: number;
     status: main.GameStatus;
 };
+
+type BackupMode = 'local' | 'cloud';
 
 type TransferProgress = {
     gameId: string;
@@ -110,6 +115,7 @@ function App() {
     const [configOpen, setConfigOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [backupOpen, setBackupOpen] = useState(false);
+    const [backupMode, setBackupMode] = useState<BackupMode>('local');
     const [cloudConfigOpen, setCloudConfigOpen] = useState(false);
     const [backups, setBackups] = useState<main.BackupInfo[]>([]);
     const [cloudUrl, setCloudUrl] = useState('');
@@ -130,6 +136,7 @@ function App() {
         const attention = items.length - synced;
         return {synced, attention};
     }, [appState?.games]);
+    const isOfflineMode = appState?.cloudStatus === 'offline';
 
     useEffect(() => {
         void refresh();
@@ -486,23 +493,48 @@ function App() {
         });
     }
 
-    async function createManualBackup() {
+    function requestBackupAction(mode: BackupMode) {
         if (!selectedStatus) {
             return;
         }
         setContextMenu(null);
-        await run(() => CreateManualBackup(selectedStatus.game.id), (backup) => {
-            setNotice(`已备份当前存档：${backup.name}`);
-            appendLog(`已备份 ${selectedStatus.game.name} 当前存档`);
+        setConfirm({
+            title: mode === 'local' ? '本地备份' : '云端备份',
+            body: mode === 'local' ? '查看已有本地备份，或立即备份当前本地存档。' : '查看已有云端备份，或立即备份当前云端存档。',
+            actions: [
+                {
+                    label: '查看备份',
+                    className: 'primary',
+                    action: () => openBackups(mode),
+                },
+                {
+                    label: '立即备份',
+                    className: 'primary',
+                    action: () => createBackup(mode),
+                },
+            ],
         });
     }
 
-    async function openRestoreBackups() {
+    async function createBackup(mode: BackupMode) {
+        if (!selectedStatus) {
+            return;
+        }
+        const task = mode === 'local' ? CreateManualBackup : CreateCloudBackup;
+        await run(() => task(selectedStatus.game.id), (backup) => {
+            setNotice(`${mode === 'local' ? '本地' : '云端'}备份完成：${backup.name}`);
+            appendLog(`已创建 ${selectedStatus.game.name} ${mode === 'local' ? '本地' : '云端'}备份`);
+        });
+    }
+
+    async function openBackups(mode: BackupMode) {
         if (!selectedStatus) {
             return;
         }
         setContextMenu(null);
-        await run(() => ListBackups(selectedStatus.game.id), (items) => {
+        setBackupMode(mode);
+        const task = mode === 'local' ? ListBackups : ListCloudBackups;
+        await run(() => task(selectedStatus.game.id), (items) => {
             setBackups(items);
             setBackupOpen(true);
         });
@@ -514,13 +546,16 @@ function App() {
         }
         setBackupOpen(false);
         setConfirm({
-            title: '还原备份',
-            body: `确认还原这个备份？\n备份：${backup.name}\n时间：${formatDateTime(backup.createdAt)}\n\n还原只会写入本地游戏存档目录：${selectedStatus.game.localSavePath}\n不会直接写入云端。需要同步到云端时，请还原完成后再点“上传本地”。`,
+            title: backupMode === 'local' ? '还原本地备份' : '还原云端备份',
+            body: backupMode === 'local'
+                ? `确认还原这个本地备份？\n备份：${backup.name}\n时间：${formatDateTime(backup.createdAt)}\n\n还原只会写入本地游戏存档目录：${selectedStatus.game.localSavePath}\n不会直接写入云端。需要同步到云端时，请还原完成后再点“上传本地”。`
+                : `确认还原这个云端备份？\n备份：${backup.name}\n时间：${formatDateTime(backup.createdAt)}\n\n还原会写入云端存档，不会直接写入本地游戏目录。`,
             actions: [{
                 label: '确认还原',
                 className: 'danger',
                 action: async () => {
-                    await run(() => RestoreBackup(selectedStatus.game.id, backup.name), async (result) => {
+                    const task = backupMode === 'local' ? RestoreBackup : RestoreCloudBackup;
+                    await run(() => task(selectedStatus.game.id, backup.name), async (result) => {
                         const state = await GetAppState();
                         setAppState(state);
                         const refreshed = state.games.find((item) => item.game.id === selectedStatus.game.id);
@@ -528,7 +563,7 @@ function App() {
                             chooseGame(refreshed);
                         }
                         setNotice(result.backupPath ? `已还原备份，原存档已备份到 ${result.backupPath}` : '已还原备份');
-                        appendLog(`已还原备份 ${backup.name}`);
+                        appendLog(`已还原${backupMode === 'local' ? '本地' : '云端'}备份 ${backup.name}`);
                     });
                 },
             }],
@@ -654,30 +689,36 @@ function App() {
                                 </div>
 
                                 <div className="actions">
-                                    <button className="ghost" onClick={compareSelectedGame} disabled={busy} title="快速对比本地和云端差异">
-                                        <RefreshCw size={17}/>
-                                        快速对比
-                                    </button>
-                                    <button className={`direction-action download ${directionTone(selectedStatus, 'cloud-to-local')}`} onClick={() => requestSync('cloud-to-local')} disabled={busy} title="下载云端到本地">
-                                        <CloudDownload size={17}/>
-                                        下载云端
-                                    </button>
-                                    <button className={`direction-action upload ${directionTone(selectedStatus, 'local-to-cloud')}`} onClick={() => requestSync('local-to-cloud')} disabled={busy} title="上传本地到云端">
-                                        <CloudUpload size={17}/>
-                                        上传本地
-                                    </button>
+                                    {!isOfflineMode && (
+                                        <>
+                                            <button className="ghost" onClick={compareSelectedGame} disabled={busy} title="快速对比本地和云端差异">
+                                                <RefreshCw size={17}/>
+                                                快速对比
+                                            </button>
+                                            <button className={`direction-action download ${directionTone(selectedStatus, 'cloud-to-local')}`} onClick={() => requestSync('cloud-to-local')} disabled={busy} title="下载云端到本地">
+                                                <CloudDownload size={17}/>
+                                                下载云端
+                                            </button>
+                                            <button className={`direction-action upload ${directionTone(selectedStatus, 'local-to-cloud')}`} onClick={() => requestSync('local-to-cloud')} disabled={busy} title="上传本地到云端">
+                                                <CloudUpload size={17}/>
+                                                上传本地
+                                            </button>
+                                        </>
+                                    )}
                                     <button className="launch-button" onClick={launchGame} disabled={busy || !selectedStatus.game.gameExePath} title="启动游戏">
                                         <Play size={17}/>
                                         启动游戏
                                     </button>
-                                    <button className="ghost" onClick={createManualBackup} disabled={busy} title="备份当前存档">
+                                    <button className="ghost" onClick={() => requestBackupAction('local')} disabled={busy} title="本地备份">
                                         <Archive size={17}/>
-                                        备份当前存档
+                                        本地备份
                                     </button>
-                                    <button className="ghost" onClick={openRestoreBackups} disabled={busy} title="查看最近备份">
-                                        <History size={17}/>
-                                        查看备份
-                                    </button>
+                                    {!isOfflineMode && (
+                                        <button className="ghost" onClick={() => requestBackupAction('cloud')} disabled={busy} title="云端备份">
+                                            <History size={17}/>
+                                            云端备份
+                                        </button>
+                                    )}
                                 </div>
 
                                 {compareResult && (
@@ -730,8 +771,8 @@ function App() {
                     <button onClick={() => openGamePath('game')} disabled={!contextMenu.status.game.gameExePath}><FolderOpen size={15}/> 打开游戏目录</button>
                     <button onClick={() => exportGameConfig(contextMenu.status)}><FileDown size={15}/> 导出游戏配置</button>
                     <hr/>
-                    <button onClick={createManualBackup}><Archive size={15}/> 备份当前存档</button>
-                    <button onClick={openRestoreBackups}><RestoreIcon size={15}/> 还原备份</button>
+                    <button onClick={() => requestBackupAction('local')}><Archive size={15}/> 本地备份</button>
+                    {!isOfflineMode && <button onClick={() => requestBackupAction('cloud')}><RestoreIcon size={15}/> 云端备份</button>}
                     <hr/>
                     <button onClick={() => refresh()}><RefreshCw size={15}/> 刷新状态</button>
                     <button onClick={launchGame} disabled={!contextMenu.status.game.gameExePath}><Play size={15}/> 启动游戏</button>
@@ -741,8 +782,8 @@ function App() {
             {backupOpen && (
                 <div className="modal-backdrop">
                     <div className="modal backup-modal">
-                        <h3>还原备份</h3>
-                        <p>选择一个备份还原到本地游戏存档目录。不会直接写入云端。</p>
+                        <h3>{backupMode === 'local' ? '本地备份' : '云端备份'}</h3>
+                        <p>{backupMode === 'local' ? '选择一个本地备份还原到本地游戏存档目录。不会直接写入云端。' : '选择一个云端备份还原到云端存档。不会直接写入本地游戏目录。'}</p>
                         <div className="backup-list">
                             {backups.map((backup) => (
                                 <button key={backup.name} onClick={() => requestRestoreBackup(backup)}>

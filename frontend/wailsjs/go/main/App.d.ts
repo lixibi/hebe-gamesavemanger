@@ -6,6 +6,8 @@ export function ChangeCloudPassword(arg1:string):Promise<main.AppState>;
 
 export function CompareGame(arg1:string):Promise<main.CompareResult>;
 
+export function CreateCloudBackup(arg1:string):Promise<main.BackupInfo>;
+
 export function CreateManualBackup(arg1:string):Promise<main.BackupInfo>;
 
 export function DeleteGame(arg1:string):Promise<main.AppState>;
@@ -20,6 +22,8 @@ export function LaunchGame(arg1:string):Promise<void>;
 
 export function ListBackups(arg1:string):Promise<Array<main.BackupInfo>>;
 
+export function ListCloudBackups(arg1:string):Promise<Array<main.BackupInfo>>;
+
 export function OpenGamePath(arg1:string,arg2:string):Promise<void>;
 
 export function PickGameExe():Promise<string>;
@@ -29,6 +33,8 @@ export function PickSaveDirectory():Promise<string>;
 export function RefreshCloudServer():Promise<main.AppState>;
 
 export function RestoreBackup(arg1:string,arg2:string):Promise<main.SyncResult>;
+
+export function RestoreCloudBackup(arg1:string,arg2:string):Promise<main.SyncResult>;
 
 export function SaveCloudServerURL(arg1:string,arg2:string):Promise<main.AppState>;
 

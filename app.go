@@ -644,6 +644,108 @@ func (a *App) RestoreBackup(id string, backupName string) (SyncResult, error) {
 	}, nil
 }
 
+func (a *App) CreateCloudBackup(id string) (BackupInfo, error) {
+	game, err := a.findGame(id)
+	if err != nil {
+		return BackupInfo{}, err
+	}
+	if err := a.requireCloudForSync(); err != nil {
+		return BackupInfo{}, err
+	}
+	if a.cloudBaseURL() == "local" {
+		return BackupInfo{}, errors.New("本地兼容模式没有云端备份")
+	}
+	req, err := http.NewRequest(http.MethodPost, a.cloudGameURL(game, "/backups"), nil)
+	if err != nil {
+		return BackupInfo{}, err
+	}
+	a.authorizeCloudRequest(req)
+	client := http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return BackupInfo{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return BackupInfo{}, fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	var payload cloudBackupResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return BackupInfo{}, err
+	}
+	for _, backup := range payload.Backups {
+		if backup.Name == payload.Name {
+			return backup, nil
+		}
+	}
+	return BackupInfo{Name: payload.Name}, nil
+}
+
+func (a *App) ListCloudBackups(id string) ([]BackupInfo, error) {
+	game, err := a.findGame(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.requireCloudForSync(); err != nil {
+		return nil, err
+	}
+	if a.cloudBaseURL() == "local" {
+		return nil, errors.New("本地兼容模式没有云端备份")
+	}
+	req, err := http.NewRequest(http.MethodGet, a.cloudGameURL(game, "/backups"), nil)
+	if err != nil {
+		return nil, err
+	}
+	a.authorizeCloudRequest(req)
+	client := http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	var payload cloudBackupsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload.Backups, nil
+}
+
+func (a *App) RestoreCloudBackup(id string, backupName string) (SyncResult, error) {
+	game, err := a.findGame(id)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	if err := a.requireCloudForSync(); err != nil {
+		return SyncResult{}, err
+	}
+	if a.cloudBaseURL() == "local" {
+		return SyncResult{}, errors.New("本地兼容模式没有云端备份")
+	}
+	if backupName != filepath.Base(backupName) || strings.TrimSpace(backupName) == "" {
+		return SyncResult{}, errors.New("invalid backup name")
+	}
+	req, err := http.NewRequest(http.MethodPost, a.cloudGameURL(game, "/backups/restore/"+url.PathEscape(backupName)), nil)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	a.authorizeCloudRequest(req)
+	client := http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return SyncResult{}, fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	var payload cloudUploadResponse
+	_ = json.NewDecoder(resp.Body).Decode(&payload)
+	return SyncResult{BackupPath: "cloud:" + payload.Backup, Status: a.statusForGame(game)}, nil
+}
+
 func (a *App) ensureLayout() error {
 	for _, dir := range []string{
 		filepath.Dir(a.configPath),
@@ -827,6 +929,15 @@ type cloudManifestResponse struct {
 
 type cloudUploadResponse struct {
 	Backup string `json:"backup"`
+}
+
+type cloudBackupResponse struct {
+	Name    string       `json:"name"`
+	Backups []BackupInfo `json:"backups"`
+}
+
+type cloudBackupsResponse struct {
+	Backups []BackupInfo `json:"backups"`
 }
 
 type cloudGameConfig struct {

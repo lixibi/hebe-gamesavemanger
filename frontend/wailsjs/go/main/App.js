@@ -10,6 +10,10 @@ export function CompareGame(arg1) {
   return window['go']['main']['App']['CompareGame'](arg1);
 }
 
+export function CreateCloudBackup(arg1) {
+  return window['go']['main']['App']['CreateCloudBackup'](arg1);
+}
+
 export function CreateManualBackup(arg1) {
   return window['go']['main']['App']['CreateManualBackup'](arg1);
 }
@@ -38,6 +42,10 @@ export function ListBackups(arg1) {
   return window['go']['main']['App']['ListBackups'](arg1);
 }
 
+export function ListCloudBackups(arg1) {
+  return window['go']['main']['App']['ListCloudBackups'](arg1);
+}
+
 export function OpenGamePath(arg1, arg2) {
   return window['go']['main']['App']['OpenGamePath'](arg1, arg2);
 }
@@ -56,6 +64,10 @@ export function RefreshCloudServer() {
 
 export function RestoreBackup(arg1, arg2) {
   return window['go']['main']['App']['RestoreBackup'](arg1, arg2);
+}
+
+export function RestoreCloudBackup(arg1, arg2) {
+  return window['go']['main']['App']['RestoreCloudBackup'](arg1, arg2);
 }
 
 export function SaveCloudServerURL(arg1, arg2) {

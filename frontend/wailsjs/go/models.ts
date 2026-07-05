@@ -99,6 +99,7 @@ export namespace main {
 	    configPath: string;
 	    dataDir: string;
 	    cloudServerURL: string;
+	    cloudPassword: string;
 	    cloudStatus: string;
 	    cloudMessage: string;
 	    games: GameStatus[];
@@ -113,6 +114,7 @@ export namespace main {
 	        this.configPath = source["configPath"];
 	        this.dataDir = source["dataDir"];
 	        this.cloudServerURL = source["cloudServerURL"];
+	        this.cloudPassword = source["cloudPassword"];
 	        this.cloudStatus = source["cloudStatus"];
 	        this.cloudMessage = source["cloudMessage"];
 	        this.games = this.convertValues(source["games"], GameStatus);

@@ -407,14 +407,24 @@ button:disabled {
     gap: 6px;
 }
 
-.cloud-url-row input {
+.cloud-password-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    gap: 6px;
+}
+
+.cloud-url-row input,
+.cloud-password-row input,
+.cloud-password-input {
     min-height: 32px;
     border-color: rgba(255, 255, 255, 0.18);
     background: rgba(255, 255, 255, 0.09);
     color: #fff;
 }
 
-.cloud-url-row input::placeholder {
+.cloud-url-row input::placeholder,
+.cloud-password-row input::placeholder,
+.cloud-password-input::placeholder {
     color: #b9bbbf;
 }
 

@@ -3,6 +3,7 @@ import {
     CloudDownload,
     CloudUpload,
     Archive,
+    KeyRound,
     FileDown,
     FileUp,
     FolderOpen,
@@ -34,7 +35,8 @@ import {
     SaveGame,
     RefreshCloudServer,
     SyncGame,
-    TestCloudServerURL
+    TestCloudServerURL,
+    ChangeCloudPassword
 } from '../wailsjs/go/main/App';
 import {main} from '../wailsjs/go/models';
 import {EventsOn} from '../wailsjs/runtime/runtime';
@@ -98,6 +100,8 @@ function App() {
     const [backupOpen, setBackupOpen] = useState(false);
     const [backups, setBackups] = useState<main.BackupInfo[]>([]);
     const [cloudUrl, setCloudUrl] = useState('');
+    const [cloudPassword, setCloudPassword] = useState('hebesave');
+    const [newCloudPassword, setNewCloudPassword] = useState('');
     const [activityLog, setActivityLog] = useState<string[]>(['等待操作']);
 
     const selectedStatus = useMemo(() => {
@@ -114,7 +118,10 @@ function App() {
         if (appState?.cloudServerURL) {
             setCloudUrl(appState.cloudServerURL);
         }
-    }, [appState?.cloudServerURL]);
+        if (appState?.cloudPassword) {
+            setCloudPassword(appState.cloudPassword);
+        }
+    }, [appState?.cloudServerURL, appState?.cloudPassword]);
 
     useEffect(() => {
         return EventsOn('game-local-newer-after-exit', (payload: main.GameStatus) => {
@@ -313,17 +320,27 @@ function App() {
     }
 
     async function testCloudService() {
-        await run(() => TestCloudServerURL(cloudUrl), (message) => {
+        await run(() => TestCloudServerURL(cloudUrl, cloudPassword), (message) => {
             setNotice(message || '云服务连接正常');
             appendLog('云服务测试通过');
         });
     }
 
     async function saveCloudService() {
-        await run(() => SaveCloudServerURL(cloudUrl), (state) => {
+        await run(() => SaveCloudServerURL(cloudUrl, cloudPassword), (state) => {
             setAppState(state);
             setNotice('云地址已保存，并已同步云端游戏列表');
             appendLog('已保存云服务地址');
+        });
+    }
+
+    async function changeCloudPassword() {
+        await run(() => ChangeCloudPassword(newCloudPassword), (state) => {
+            setAppState(state);
+            setCloudPassword(newCloudPassword);
+            setNewCloudPassword('');
+            setNotice('服务端密码已修改');
+            appendLog('已修改服务端密码');
         });
     }
 
@@ -484,6 +501,13 @@ function App() {
                         </button>
                         <button className="ghost compact icon-only" onClick={saveCloudService} disabled={busy} title="保存云地址">
                             <Save size={15}/>
+                        </button>
+                    </div>
+                    <input className="cloud-password-input" type="password" value={cloudPassword} onChange={(event) => setCloudPassword(event.target.value)} placeholder="连接密码"/>
+                    <div className="cloud-password-row">
+                        <input type="password" value={newCloudPassword} onChange={(event) => setNewCloudPassword(event.target.value)} placeholder="新服务端密码"/>
+                        <button className="ghost compact icon-only" onClick={changeCloudPassword} disabled={busy || !newCloudPassword} title="修改服务端密码">
+                            <KeyRound size={15}/>
                         </button>
                     </div>
                     <p>{appState?.cloudMessage ?? '正在读取状态'}</p>

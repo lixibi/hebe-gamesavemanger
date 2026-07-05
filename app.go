@@ -27,6 +27,7 @@ import (
 const (
 	maxBackupsPerGame     = 5
 	defaultCloudServerURL = "http://127.0.0.1:27843"
+	defaultCloudPassword  = "hebesave"
 )
 
 type App struct {
@@ -41,6 +42,7 @@ type App struct {
 
 type Config struct {
 	CloudServerURL string       `json:"cloudServerURL"`
+	CloudPassword  string       `json:"cloudPassword"`
 	Games          []GameConfig `json:"games"`
 }
 
@@ -61,6 +63,7 @@ type AppState struct {
 	ConfigPath     string       `json:"configPath"`
 	DataDir        string       `json:"dataDir"`
 	CloudServerURL string       `json:"cloudServerURL"`
+	CloudPassword  string       `json:"cloudPassword"`
 	CloudStatus    string       `json:"cloudStatus"`
 	CloudMessage   string       `json:"cloudMessage"`
 	Games          []GameStatus `json:"games"`
@@ -177,6 +180,7 @@ func (a *App) GetAppState() (AppState, error) {
 		ConfigPath:     a.configPath,
 		DataDir:        a.dataDir,
 		CloudServerURL: cfg.CloudServerURL,
+		CloudPassword:  cfg.CloudPassword,
 		CloudStatus:    syncStatus,
 		CloudMessage:   syncMessage,
 		Games:          statuses,
@@ -325,26 +329,60 @@ func (a *App) RefreshCloudServer() (AppState, error) {
 	return a.GetAppState()
 }
 
-func (a *App) SaveCloudServerURL(serverURL string) (AppState, error) {
+func (a *App) SaveCloudServerURL(serverURL string, password string) (AppState, error) {
 	cfg, err := a.loadConfig()
 	if err != nil {
 		return AppState{}, err
 	}
 	serverURL = normalizeCloudServerURL(serverURL)
+	password = normalizeCloudPassword(password)
 	cfg.CloudServerURL = serverURL
+	cfg.CloudPassword = password
 	if err := a.saveConfig(cfg); err != nil {
 		return AppState{}, err
 	}
 	return a.GetAppState()
 }
 
-func (a *App) TestCloudServerURL(serverURL string) (string, error) {
+func (a *App) TestCloudServerURL(serverURL string, password string) (string, error) {
 	serverURL = normalizeCloudServerURL(serverURL)
-	status, message := a.cloudServerStatus(serverURL)
+	password = normalizeCloudPassword(password)
+	status, message := a.cloudServerStatusWithPassword(serverURL, password)
 	if status != "running" {
 		return message, errors.New(message)
 	}
 	return message, nil
+}
+
+func (a *App) ChangeCloudPassword(newPassword string) (AppState, error) {
+	newPassword = strings.TrimSpace(newPassword)
+	if newPassword == "" {
+		return AppState{}, errors.New("new password is required")
+	}
+	req, err := http.NewRequest(http.MethodPut, a.cloudBaseURL()+"/api/password", strings.NewReader(fmt.Sprintf(`{"password":%q}`, newPassword)))
+	if err != nil {
+		return AppState{}, err
+	}
+	a.authorizeCloudRequest(req)
+	req.Header.Set("Content-Type", "application/json")
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return AppState{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return AppState{}, fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return AppState{}, err
+	}
+	cfg.CloudPassword = newPassword
+	if err := a.saveConfig(cfg); err != nil {
+		return AppState{}, err
+	}
+	return a.GetAppState()
 }
 
 func (a *App) ExportGameConfig(id string) (string, error) {
@@ -532,7 +570,7 @@ func (a *App) ensureLayout() error {
 		}
 	}
 	if _, err := os.Stat(a.configPath); errors.Is(err, os.ErrNotExist) {
-		return a.saveConfig(Config{CloudServerURL: defaultCloudServerURL, Games: []GameConfig{}})
+		return a.saveConfig(Config{CloudServerURL: defaultCloudServerURL, CloudPassword: defaultCloudPassword, Games: []GameConfig{}})
 	}
 	return nil
 }
@@ -547,7 +585,7 @@ func (a *App) loadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if strings.TrimSpace(string(raw)) == "" {
-		return Config{CloudServerURL: defaultCloudServerURL, Games: []GameConfig{}}, nil
+		return Config{CloudServerURL: defaultCloudServerURL, CloudPassword: defaultCloudPassword, Games: []GameConfig{}}, nil
 	}
 
 	var cfg Config
@@ -556,6 +594,9 @@ func (a *App) loadConfig() (Config, error) {
 	}
 	if strings.TrimSpace(cfg.CloudServerURL) == "" {
 		cfg.CloudServerURL = defaultCloudServerURL
+	}
+	if strings.TrimSpace(cfg.CloudPassword) == "" {
+		cfg.CloudPassword = defaultCloudPassword
 	}
 	for i := range cfg.Games {
 		cfg.Games[i].applyDefaults()
@@ -713,6 +754,20 @@ func (a *App) cloudBaseURL() string {
 	return normalizeCloudServerURL(cfg.CloudServerURL)
 }
 
+func (a *App) cloudPassword() string {
+	cfg, err := a.loadConfig()
+	if err != nil || strings.TrimSpace(cfg.CloudPassword) == "" {
+		return defaultCloudPassword
+	}
+	return cfg.CloudPassword
+}
+
+func (a *App) authorizeCloudRequest(req *http.Request) {
+	if a.cloudBaseURL() != "local" {
+		req.Header.Set("X-Hebe-Password", a.cloudPassword())
+	}
+}
+
 func (a *App) cloudGameURL(game GameConfig, suffix string) string {
 	game.applyDefaults()
 	return a.cloudBaseURL() + "/api/games/" + url.PathEscape(game.FolderName) + suffix
@@ -735,6 +790,7 @@ func (a *App) loadCloudGames() ([]cloudGameConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	a.authorizeCloudRequest(req)
 	client := http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -764,6 +820,7 @@ func (a *App) saveCloudGame(game GameConfig) error {
 	if err != nil {
 		return err
 	}
+	a.authorizeCloudRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	client := http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
@@ -785,6 +842,7 @@ func (a *App) cloudManifest(game GameConfig) (map[string]fileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	a.authorizeCloudRequest(req)
 	client := http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -831,6 +889,7 @@ func (a *App) downloadCloudToTemp(game GameConfig) (string, func(), error) {
 		cleanup()
 		return "", cleanup, err
 	}
+	a.authorizeCloudRequest(req)
 	client := http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -862,6 +921,7 @@ func (a *App) uploadLocalToCloud(game GameConfig, backup bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	a.authorizeCloudRequest(req)
 	req.Header.Set("Content-Type", "application/gzip")
 	client := http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
@@ -883,22 +943,31 @@ func (a *App) uploadLocalToCloud(game GameConfig, backup bool) (string, error) {
 }
 
 func (a *App) cloudServerStatus(baseURL string) (string, string) {
+	return a.cloudServerStatusWithPassword(baseURL, a.cloudPassword())
+}
+
+func (a *App) cloudServerStatusWithPassword(baseURL string, password string) (string, string) {
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = defaultCloudServerURL
 	}
+	password = normalizeCloudPassword(password)
 	if baseURL == "local" {
 		return "running", "本地 data 兼容模式，仅用于测试或离线调试"
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/health", nil)
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/games", nil)
 	if err != nil {
 		return "stopped", err.Error()
 	}
+	req.Header.Set("X-Hebe-Password", password)
 	client := http.Client{Timeout: 1500 * time.Millisecond}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "stopped", fmt.Sprintf("云服务未连接：%s", err.Error())
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "stopped", "云服务密码错误"
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "stopped", fmt.Sprintf("云服务返回 %s", resp.Status)
 	}
@@ -1706,4 +1775,12 @@ func normalizeCloudServerURL(value string) string {
 		value = "http://" + value
 	}
 	return strings.TrimRight(value, "/")
+}
+
+func normalizeCloudPassword(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultCloudPassword
+	}
+	return value
 }

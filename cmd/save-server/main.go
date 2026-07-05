@@ -23,6 +23,7 @@ import (
 const (
 	defaultAddr       = ":27843"
 	defaultDataRoot   = "/data"
+	defaultPassword   = "hebesave"
 	maxBackupsPerGame = 5
 )
 
@@ -33,7 +34,8 @@ type server struct {
 }
 
 type serverConfig struct {
-	Games []cloudGameConfig `json:"games"`
+	Password string            `json:"password"`
+	Games    []cloudGameConfig `json:"games"`
 }
 
 type cloudGameConfig struct {
@@ -95,6 +97,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("PUT /api/password", s.handleChangePassword)
 	mux.HandleFunc("GET /api/games", s.handleGames)
 	mux.HandleFunc("/api/games/", s.handleGame)
 
@@ -111,6 +114,9 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGames(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r) {
+		return
+	}
 	cfg, err := s.loadConfig()
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
@@ -144,6 +150,9 @@ func (s *server) handleGames(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGame(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r) {
+		return
+	}
 	rest := strings.TrimPrefix(r.URL.Path, "/api/games/")
 	parts := strings.Split(rest, "/")
 	if len(parts) < 2 {
@@ -186,6 +195,35 @@ func (s *server) handleGame(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, errors.New("unknown endpoint"), http.StatusNotFound)
 	}
+}
+
+func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r) {
+		return
+	}
+	var payload struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	payload.Password = strings.TrimSpace(payload.Password)
+	if payload.Password == "" {
+		writeError(w, errors.New("password is required"), http.StatusBadRequest)
+		return
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	cfg.Password = payload.Password
+	if err := s.saveConfig(cfg); err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *server) handleSaveGameConfig(w http.ResponseWriter, r *http.Request, game string) {
@@ -439,20 +477,36 @@ func (s *server) gameBackupDir(game string) string {
 	return filepath.Join(s.backupDir, game)
 }
 
+func (s *server) authorize(w http.ResponseWriter, r *http.Request) bool {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return false
+	}
+	if r.Header.Get("X-Hebe-Password") != cfg.Password {
+		writeError(w, errors.New("invalid password"), http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
 func (s *server) loadConfig() (serverConfig, error) {
 	raw, err := os.ReadFile(s.configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return serverConfig{Games: []cloudGameConfig{}}, nil
+			return serverConfig{Password: defaultPassword, Games: []cloudGameConfig{}}, nil
 		}
 		return serverConfig{}, err
 	}
 	if strings.TrimSpace(string(raw)) == "" {
-		return serverConfig{Games: []cloudGameConfig{}}, nil
+		return serverConfig{Password: defaultPassword, Games: []cloudGameConfig{}}, nil
 	}
 	var cfg serverConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return serverConfig{}, err
+	}
+	if strings.TrimSpace(cfg.Password) == "" {
+		cfg.Password = defaultPassword
 	}
 	for i := range cfg.Games {
 		cfg.Games[i].ID = safeName(firstNonEmpty(cfg.Games[i].ID, cfg.Games[i].FolderName))

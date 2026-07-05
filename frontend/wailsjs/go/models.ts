@@ -99,8 +99,8 @@ export namespace main {
 	    configPath: string;
 	    dataDir: string;
 	    cloudServerURL: string;
-	    syncthingStatus: string;
-	    syncthingMessage: string;
+	    cloudStatus: string;
+	    cloudMessage: string;
 	    games: GameStatus[];
 	
 	    static createFrom(source: any = {}) {
@@ -113,8 +113,8 @@ export namespace main {
 	        this.configPath = source["configPath"];
 	        this.dataDir = source["dataDir"];
 	        this.cloudServerURL = source["cloudServerURL"];
-	        this.syncthingStatus = source["syncthingStatus"];
-	        this.syncthingMessage = source["syncthingMessage"];
+	        this.cloudStatus = source["cloudStatus"];
+	        this.cloudMessage = source["cloudMessage"];
 	        this.games = this.convertValues(source["games"], GameStatus);
 	    }
 	

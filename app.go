@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,15 +30,13 @@ const (
 )
 
 type App struct {
-	ctx           context.Context
-	rootDir       string
-	configPath    string
-	dataDir       string
-	backupDir     string
-	autoSessions  map[string]chan struct{}
-	syncthingCmd  *exec.Cmd
-	syncthingLock sync.Mutex
-	autoLock      sync.Mutex
+	ctx          context.Context
+	rootDir      string
+	configPath   string
+	dataDir      string
+	backupDir    string
+	autoSessions map[string]chan struct{}
+	autoLock     sync.Mutex
 }
 
 type Config struct {
@@ -60,13 +57,13 @@ type GameConfig struct {
 }
 
 type AppState struct {
-	RootDir          string       `json:"rootDir"`
-	ConfigPath       string       `json:"configPath"`
-	DataDir          string       `json:"dataDir"`
-	CloudServerURL   string       `json:"cloudServerURL"`
-	SyncthingStatus  string       `json:"syncthingStatus"`
-	SyncthingMessage string       `json:"syncthingMessage"`
-	Games            []GameStatus `json:"games"`
+	RootDir        string       `json:"rootDir"`
+	ConfigPath     string       `json:"configPath"`
+	DataDir        string       `json:"dataDir"`
+	CloudServerURL string       `json:"cloudServerURL"`
+	CloudStatus    string       `json:"cloudStatus"`
+	CloudMessage   string       `json:"cloudMessage"`
+	Games          []GameStatus `json:"games"`
 }
 
 type GameStatus struct {
@@ -168,20 +165,21 @@ func (a *App) GetAppState() (AppState, error) {
 		return AppState{}, err
 	}
 
-	statuses := make([]GameStatus, 0, len(cfg.Games))
-	for _, game := range cfg.Games {
+	games := a.mergeCloudGames(cfg)
+	statuses := make([]GameStatus, 0, len(games))
+	for _, game := range games {
 		statuses = append(statuses, a.statusForGame(game))
 	}
 
 	syncStatus, syncMessage := a.cloudServerStatus(cfg.CloudServerURL)
 	return AppState{
-		RootDir:          a.rootDir,
-		ConfigPath:       a.configPath,
-		DataDir:          a.dataDir,
-		CloudServerURL:   cfg.CloudServerURL,
-		SyncthingStatus:  syncStatus,
-		SyncthingMessage: syncMessage,
-		Games:            statuses,
+		RootDir:        a.rootDir,
+		ConfigPath:     a.configPath,
+		DataDir:        a.dataDir,
+		CloudServerURL: cfg.CloudServerURL,
+		CloudStatus:    syncStatus,
+		CloudMessage:   syncMessage,
+		Games:          statuses,
 	}, nil
 }
 
@@ -191,6 +189,19 @@ func (a *App) SaveGame(game GameConfig) (AppState, error) {
 	}
 	if err := game.normalizeAndValidate(); err != nil {
 		return AppState{}, err
+	}
+	if err := a.saveCloudGame(game); err != nil {
+		return AppState{}, fmt.Errorf("保存云端游戏配置失败：%w", err)
+	}
+	shouldInitialUpload := a.cloudBaseURL() != "local" && strings.TrimSpace(game.LocalSavePath) != ""
+	if shouldInitialUpload {
+		manifest, err := scanDirectory(game.LocalSavePath)
+		if err != nil {
+			return AppState{}, fmt.Errorf("检查本地存档失败：%w", err)
+		}
+		if len(manifest) == 0 {
+			return AppState{}, errors.New("本地存档目录文件数为 0，已停止首次上传，请确认存档路径是否正确")
+		}
 	}
 
 	cfg, err := a.loadConfig()
@@ -217,6 +228,11 @@ func (a *App) SaveGame(game GameConfig) (AppState, error) {
 		return AppState{}, err
 	}
 	_ = os.MkdirAll(a.cloudSavePath(game), 0o755)
+	if shouldInitialUpload {
+		if _, err := a.uploadLocalToCloud(game, true); err != nil {
+			return AppState{}, fmt.Errorf("首次上传失败：%w", err)
+		}
+	}
 	return a.GetAppState()
 }
 
@@ -305,8 +321,30 @@ func (a *App) LaunchGame(id string) error {
 	return nil
 }
 
-func (a *App) StartSyncthing() (AppState, error) {
+func (a *App) RefreshCloudServer() (AppState, error) {
 	return a.GetAppState()
+}
+
+func (a *App) SaveCloudServerURL(serverURL string) (AppState, error) {
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return AppState{}, err
+	}
+	serverURL = normalizeCloudServerURL(serverURL)
+	cfg.CloudServerURL = serverURL
+	if err := a.saveConfig(cfg); err != nil {
+		return AppState{}, err
+	}
+	return a.GetAppState()
+}
+
+func (a *App) TestCloudServerURL(serverURL string) (string, error) {
+	serverURL = normalizeCloudServerURL(serverURL)
+	status, message := a.cloudServerStatus(serverURL)
+	if status != "running" {
+		return message, errors.New(message)
+	}
+	return message, nil
 }
 
 func (a *App) ExportGameConfig(id string) (string, error) {
@@ -538,12 +576,68 @@ func (a *App) findGame(id string) (GameConfig, error) {
 	if err != nil {
 		return GameConfig{}, err
 	}
-	for _, game := range cfg.Games {
+	for _, game := range a.mergeCloudGames(cfg) {
 		if game.ID == id {
 			return game, nil
 		}
 	}
 	return GameConfig{}, fmt.Errorf("game not found: %s", id)
+}
+
+func (a *App) mergeCloudGames(cfg Config) []GameConfig {
+	localByID := map[string]GameConfig{}
+	localByFolder := map[string]GameConfig{}
+	for _, game := range cfg.Games {
+		game.applyDefaults()
+		localByID[game.ID] = game
+		localByFolder[game.FolderName] = game
+	}
+
+	cloudGames, err := a.loadCloudGames()
+	if err != nil || len(cloudGames) == 0 {
+		return cfg.Games
+	}
+
+	merged := make([]GameConfig, 0, len(cloudGames))
+	seen := map[string]struct{}{}
+	for _, cloud := range cloudGames {
+		base := GameConfig{
+			ID:                        safeName(firstNonEmpty(cloud.ID, cloud.FolderName)),
+			Name:                      strings.TrimSpace(cloud.Name),
+			FolderName:                safeName(firstNonEmpty(cloud.FolderName, cloud.ID)),
+			AutoUploadMode:            "manual",
+			AutoUploadIntervalMinutes: 5,
+		}
+		if base.Name == "" {
+			base.Name = base.FolderName
+		}
+		if local, ok := localByID[base.ID]; ok {
+			base.LocalSavePath = local.LocalSavePath
+			base.GameExePath = local.GameExePath
+			base.GameArgs = local.GameArgs
+			base.AutoUploadMode = local.AutoUploadMode
+			base.AutoUploadIntervalMinutes = local.AutoUploadIntervalMinutes
+		} else if local, ok := localByFolder[base.FolderName]; ok {
+			base.LocalSavePath = local.LocalSavePath
+			base.GameExePath = local.GameExePath
+			base.GameArgs = local.GameArgs
+			base.AutoUploadMode = local.AutoUploadMode
+			base.AutoUploadIntervalMinutes = local.AutoUploadIntervalMinutes
+		}
+		base.applyDefaults()
+		merged = append(merged, base)
+		seen[base.ID] = struct{}{}
+	}
+	for _, local := range cfg.Games {
+		local.applyDefaults()
+		if _, ok := seen[local.ID]; !ok {
+			merged = append(merged, local)
+		}
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
+	})
+	return merged
 }
 
 func (a *App) statusForGame(game GameConfig) GameStatus {
@@ -601,17 +695,86 @@ type cloudUploadResponse struct {
 	Backup string `json:"backup"`
 }
 
+type cloudGameConfig struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	FolderName string `json:"folderName"`
+}
+
+type cloudGamesResponse struct {
+	Games []cloudGameConfig `json:"games"`
+}
+
 func (a *App) cloudBaseURL() string {
 	cfg, err := a.loadConfig()
 	if err != nil || strings.TrimSpace(cfg.CloudServerURL) == "" {
 		return defaultCloudServerURL
 	}
-	return strings.TrimRight(cfg.CloudServerURL, "/")
+	return normalizeCloudServerURL(cfg.CloudServerURL)
 }
 
 func (a *App) cloudGameURL(game GameConfig, suffix string) string {
 	game.applyDefaults()
 	return a.cloudBaseURL() + "/api/games/" + url.PathEscape(game.FolderName) + suffix
+}
+
+func (a *App) loadCloudGames() ([]cloudGameConfig, error) {
+	if a.cloudBaseURL() == "local" {
+		cfg, err := a.loadConfig()
+		if err != nil {
+			return nil, err
+		}
+		games := make([]cloudGameConfig, 0, len(cfg.Games))
+		for _, game := range cfg.Games {
+			game.applyDefaults()
+			games = append(games, cloudGameConfig{ID: game.ID, Name: game.Name, FolderName: game.FolderName})
+		}
+		return games, nil
+	}
+	req, err := http.NewRequest(http.MethodGet, a.cloudBaseURL()+"/api/games", nil)
+	if err != nil {
+		return nil, err
+	}
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	var payload cloudGamesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload.Games, nil
+}
+
+func (a *App) saveCloudGame(game GameConfig) error {
+	if a.cloudBaseURL() == "local" {
+		return nil
+	}
+	payload := cloudGameConfig{ID: game.ID, Name: game.Name, FolderName: game.FolderName}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPut, a.cloudGameURL(game, "/config"), strings.NewReader(string(raw)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	return nil
 }
 
 func (a *App) cloudManifest(game GameConfig) (map[string]fileInfo, error) {
@@ -978,87 +1141,6 @@ func backupInfo(path string) (BackupInfo, error) {
 	}, nil
 }
 
-func (a *App) startSyncthing() {
-	a.syncthingLock.Lock()
-	defer a.syncthingLock.Unlock()
-
-	if a.syncthingCmd != nil && a.syncthingCmd.Process != nil {
-		return
-	}
-	if isPortOpen("127.0.0.1:8384", 300*time.Millisecond) {
-		return
-	}
-
-	binary := a.findSyncthingBinary()
-	if binary == "" {
-		return
-	}
-
-	args := []string{"-no-browser", "-no-restart"}
-	if home := a.findSyncthingHome(); home != "" {
-		args = append(args, "-home", home)
-	}
-
-	cmd := exec.Command(binary, args...)
-	cmd.Dir = a.rootDir
-	hideCommandWindow(cmd)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		return
-	}
-	a.syncthingCmd = cmd
-	go func() {
-		_ = cmd.Wait()
-		a.syncthingLock.Lock()
-		if a.syncthingCmd == cmd {
-			a.syncthingCmd = nil
-		}
-		a.syncthingLock.Unlock()
-	}()
-}
-
-func (a *App) syncthingStatus() (string, string) {
-	if isPortOpen("127.0.0.1:8384", 300*time.Millisecond) {
-		return "running", "Syncthing default port 127.0.0.1:8384 is reachable"
-	}
-	if a.findSyncthingBinary() == "" {
-		return "not-found", "Put syncthing or syncthing.exe next to this app"
-	}
-	return "stopped", "Syncthing binary was found but the GUI port is not reachable"
-}
-
-func (a *App) findSyncthingBinary() string {
-	names := []string{"syncthing", filepath.Join("syncthing", "syncthing")}
-	if runtime.GOOS == "windows" {
-		names = []string{"syncthing.exe", filepath.Join("syncthing", "syncthing.exe")}
-	}
-	for _, dir := range candidateRootDirs(a.rootDir) {
-		for _, name := range names {
-			path := filepath.Join(dir, name)
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
-				return path
-			}
-		}
-	}
-	return ""
-}
-
-func (a *App) findSyncthingHome() string {
-	for _, root := range candidateRootDirs(a.rootDir) {
-		for _, dir := range []string{
-			filepath.Join(root, "syncthing-home"),
-			filepath.Join(root, "syncthing", "config"),
-			filepath.Join(root, "config", "syncthing"),
-		} {
-			if _, err := os.Stat(filepath.Join(dir, "config.xml")); err == nil {
-				return dir
-			}
-		}
-	}
-	return ""
-}
-
 func (g *GameConfig) normalizeAndValidate() error {
 	g.ID = safeName(strings.TrimSpace(g.ID))
 	g.Name = strings.TrimSpace(g.Name)
@@ -1075,9 +1157,6 @@ func (g *GameConfig) normalizeAndValidate() error {
 	}
 	if g.FolderName == "" {
 		return errors.New("cloud folder name is required")
-	}
-	if g.LocalSavePath == "" {
-		return errors.New("local save path is required")
 	}
 	if g.ID == "" {
 		g.ID = g.FolderName
@@ -1558,45 +1637,6 @@ func openPath(path string) error {
 	return cmd.Start()
 }
 
-func candidateRootDirs(root string) []string {
-	seen := map[string]struct{}{}
-	var dirs []string
-	add := func(path string) {
-		if strings.TrimSpace(path) == "" {
-			return
-		}
-		abs, err := filepath.Abs(path)
-		if err != nil {
-			abs = path
-		}
-		if _, ok := seen[abs]; ok {
-			return
-		}
-		seen[abs] = struct{}{}
-		dirs = append(dirs, abs)
-	}
-
-	add(root)
-	if exe, err := os.Executable(); err == nil {
-		add(filepath.Dir(exe))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		add(cwd)
-	}
-	return dirs
-}
-
-func waitForPort(address string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if isPortOpen(address, 300*time.Millisecond) {
-			return true
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return isPortOpen(address, 300*time.Millisecond)
-}
-
 func samePath(left string, right string) bool {
 	leftAbs, leftErr := filepath.Abs(filepath.Clean(left))
 	rightAbs, rightErr := filepath.Abs(filepath.Clean(right))
@@ -1645,11 +1685,25 @@ func safeName(value string) string {
 	return strings.Trim(b.String(), ".-_")
 }
 
-func isPortOpen(address string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("tcp", address, timeout)
-	if err != nil {
-		return false
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
 	}
-	_ = conn.Close()
-	return true
+	return ""
+}
+
+func normalizeCloudServerURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultCloudServerURL
+	}
+	if value == "local" {
+		return value
+	}
+	if !strings.Contains(value, "://") {
+		value = "http://" + value
+	}
+	return strings.TrimRight(value, "/")
 }

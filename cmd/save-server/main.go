@@ -27,8 +27,19 @@ const (
 )
 
 type server struct {
-	root      string
-	backupDir string
+	root       string
+	backupDir  string
+	configPath string
+}
+
+type serverConfig struct {
+	Games []cloudGameConfig `json:"games"`
+}
+
+type cloudGameConfig struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	FolderName string `json:"folderName"`
 }
 
 type fileInfo struct {
@@ -71,8 +82,9 @@ func main() {
 	flag.Parse()
 
 	s := &server{
-		root:      filepath.Clean(root),
-		backupDir: filepath.Join(filepath.Clean(root), ".backups"),
+		root:       filepath.Clean(root),
+		backupDir:  filepath.Join(filepath.Clean(root), ".backups"),
+		configPath: filepath.Join(filepath.Clean(root), ".hebe-games.json"),
 	}
 	if err := os.MkdirAll(s.root, 0o755); err != nil {
 		log.Fatal(err)
@@ -99,19 +111,36 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGames(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	seen := map[string]struct{}{}
+	for _, game := range cfg.Games {
+		seen[game.FolderName] = struct{}{}
+	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
-	games := []string{}
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".backups" {
-			games = append(games, entry.Name())
+		if entry.IsDir() && entry.Name() != ".backups" && strings.TrimSpace(entry.Name()) != "" {
+			if _, ok := seen[entry.Name()]; !ok {
+				cfg.Games = append(cfg.Games, cloudGameConfig{
+					ID:         entry.Name(),
+					Name:       entry.Name(),
+					FolderName: entry.Name(),
+				})
+				seen[entry.Name()] = struct{}{}
+			}
 		}
 	}
-	sort.Strings(games)
-	writeJSON(w, map[string]any{"games": games})
+	sort.Slice(cfg.Games, func(i, j int) bool {
+		return strings.ToLower(cfg.Games[i].Name) < strings.ToLower(cfg.Games[j].Name)
+	})
+	writeJSON(w, map[string]any{"games": cfg.Games})
 }
 
 func (s *server) handleGame(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +157,8 @@ func (s *server) handleGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case len(parts) == 2 && parts[1] == "config" && r.Method == http.MethodPut:
+		s.handleSaveGameConfig(w, r, game)
 	case len(parts) == 2 && parts[1] == "manifest" && r.Method == http.MethodGet:
 		s.handleManifest(w, game)
 	case len(parts) == 2 && parts[1] == "archive" && r.Method == http.MethodGet:
@@ -155,6 +186,46 @@ func (s *server) handleGame(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, errors.New("unknown endpoint"), http.StatusNotFound)
 	}
+}
+
+func (s *server) handleSaveGameConfig(w http.ResponseWriter, r *http.Request, game string) {
+	var payload cloudGameConfig
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	payload.ID = safeName(firstNonEmpty(payload.ID, payload.FolderName, game))
+	payload.FolderName = safeName(firstNonEmpty(payload.FolderName, game, payload.ID))
+	payload.Name = strings.TrimSpace(payload.Name)
+	if payload.Name == "" {
+		payload.Name = payload.FolderName
+	}
+	if payload.FolderName != game {
+		writeError(w, errors.New("game folder does not match URL"), http.StatusBadRequest)
+		return
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	replaced := false
+	for i := range cfg.Games {
+		if cfg.Games[i].FolderName == payload.FolderName || cfg.Games[i].ID == payload.ID {
+			cfg.Games[i] = payload
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		cfg.Games = append(cfg.Games, payload)
+	}
+	if err := s.saveConfig(cfg); err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	_ = os.MkdirAll(s.gameDir(game), 0o755)
+	writeJSON(w, payload)
 }
 
 func (s *server) handleManifest(w http.ResponseWriter, game string) {
@@ -366,6 +437,43 @@ func (s *server) gameDir(game string) string {
 
 func (s *server) gameBackupDir(game string) string {
 	return filepath.Join(s.backupDir, game)
+}
+
+func (s *server) loadConfig() (serverConfig, error) {
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return serverConfig{Games: []cloudGameConfig{}}, nil
+		}
+		return serverConfig{}, err
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return serverConfig{Games: []cloudGameConfig{}}, nil
+	}
+	var cfg serverConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return serverConfig{}, err
+	}
+	for i := range cfg.Games {
+		cfg.Games[i].ID = safeName(firstNonEmpty(cfg.Games[i].ID, cfg.Games[i].FolderName))
+		cfg.Games[i].FolderName = safeName(firstNonEmpty(cfg.Games[i].FolderName, cfg.Games[i].ID))
+		cfg.Games[i].Name = strings.TrimSpace(cfg.Games[i].Name)
+		if cfg.Games[i].Name == "" {
+			cfg.Games[i].Name = cfg.Games[i].FolderName
+		}
+	}
+	return cfg, nil
+}
+
+func (s *server) saveConfig(cfg serverConfig) error {
+	sort.Slice(cfg.Games, func(i, j int) bool {
+		return strings.ToLower(cfg.Games[i].Name) < strings.ToLower(cfg.Games[j].Name)
+	})
+	raw, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.configPath, append(raw, '\n'), 0o644)
 }
 
 func scanDirectory(root string) (manifestResponse, error) {
@@ -591,6 +699,34 @@ func cleanName(name string) (string, error) {
 		return "", fmt.Errorf("invalid name: %s", name)
 	}
 	return name, nil
+}
+
+func safeName(input string) string {
+	input = strings.ToLower(strings.TrimSpace(input))
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range input {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteRune('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func backupName(reason string) string {

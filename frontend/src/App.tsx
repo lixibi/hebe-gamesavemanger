@@ -30,9 +30,11 @@ import {
     PickGameExe,
     PickSaveDirectory,
     RestoreBackup,
+    SaveCloudServerURL,
     SaveGame,
-    StartSyncthing,
-    SyncGame
+    RefreshCloudServer,
+    SyncGame,
+    TestCloudServerURL
 } from '../wailsjs/go/main/App';
 import {main} from '../wailsjs/go/models';
 import {EventsOn} from '../wailsjs/runtime/runtime';
@@ -95,6 +97,7 @@ function App() {
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [backupOpen, setBackupOpen] = useState(false);
     const [backups, setBackups] = useState<main.BackupInfo[]>([]);
+    const [cloudUrl, setCloudUrl] = useState('');
     const [activityLog, setActivityLog] = useState<string[]>(['等待操作']);
 
     const selectedStatus = useMemo(() => {
@@ -106,6 +109,12 @@ function App() {
         const timer = window.setInterval(() => void refresh(false), 5000);
         return () => window.clearInterval(timer);
     }, [selectedId, configOpen]);
+
+    useEffect(() => {
+        if (appState?.cloudServerURL) {
+            setCloudUrl(appState.cloudServerURL);
+        }
+    }, [appState?.cloudServerURL]);
 
     useEffect(() => {
         return EventsOn('game-local-newer-after-exit', (payload: main.GameStatus) => {
@@ -296,10 +305,25 @@ function App() {
     }
 
     async function refreshCloudService() {
-        await run(StartSyncthing, (state) => {
+        await run(RefreshCloudServer, (state) => {
             setAppState(state);
             setNotice('已刷新云服务连接状态');
             appendLog('已刷新云服务连接状态');
+        });
+    }
+
+    async function testCloudService() {
+        await run(() => TestCloudServerURL(cloudUrl), (message) => {
+            setNotice(message || '云服务连接正常');
+            appendLog('云服务测试通过');
+        });
+    }
+
+    async function saveCloudService() {
+        await run(() => SaveCloudServerURL(cloudUrl), (state) => {
+            setAppState(state);
+            setNotice('云地址已保存，并已同步云端游戏列表');
+            appendLog('已保存云服务地址');
         });
     }
 
@@ -449,11 +473,20 @@ function App() {
                     {games.length === 0 && <div className="empty">暂无游戏配置</div>}
                 </div>
 
-                <div className="syncthing">
-                    <span className={`status-pill ${appState?.syncthingStatus ?? 'stopped'}`}>
-                        {appState?.syncthingStatus === 'running' ? '云服务已连接' : '云服务未连接'}
+                <div className="cloud-service">
+                    <span className={`status-pill ${appState?.cloudStatus ?? 'stopped'}`}>
+                        {appState?.cloudStatus === 'running' ? '云服务已连接' : '云服务未连接'}
                     </span>
-                    <p>{appState?.syncthingMessage ?? '正在读取状态'}</p>
+                    <div className="cloud-url-row">
+                        <input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="http://NAS-IP:27843"/>
+                        <button className="ghost compact icon-only" onClick={testCloudService} disabled={busy} title="测试连接">
+                            <RefreshCw size={15}/>
+                        </button>
+                        <button className="ghost compact icon-only" onClick={saveCloudService} disabled={busy} title="保存云地址">
+                            <Save size={15}/>
+                        </button>
+                    </div>
+                    <p>{appState?.cloudMessage ?? '正在读取状态'}</p>
                     <button className="ghost full" onClick={refreshCloudService} disabled={busy} title="刷新云服务">
                         <RotateCcw size={16}/>
                         刷新云服务

@@ -22,10 +22,14 @@ export function PickGameExe():Promise<string>;
 
 export function PickSaveDirectory():Promise<string>;
 
+export function RefreshCloudServer():Promise<main.AppState>;
+
 export function RestoreBackup(arg1:string,arg2:string):Promise<main.SyncResult>;
+
+export function SaveCloudServerURL(arg1:string):Promise<main.AppState>;
 
 export function SaveGame(arg1:main.GameConfig):Promise<main.AppState>;
 
-export function StartSyncthing():Promise<main.AppState>;
-
 export function SyncGame(arg1:string,arg2:string):Promise<main.SyncResult>;
+
+export function TestCloudServerURL(arg1:string):Promise<string>;

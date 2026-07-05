@@ -80,13 +80,13 @@ button {
 .metric span,
 .path-block span,
 .game-row small,
-.syncthing p {
+.cloud-service p {
     color: var(--muted);
     font-size: 12px;
 }
 
 .brand span,
-.syncthing p {
+.cloud-service p {
     color: #b9bbbf;
 }
 
@@ -388,17 +388,34 @@ button:disabled {
     width: 100%;
 }
 
-.syncthing {
+.cloud-service {
     display: grid;
     gap: 8px;
     padding-top: 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 
-.syncthing p {
+.cloud-service p {
     margin: 0;
     line-height: 1.4;
     overflow-wrap: anywhere;
+}
+
+.cloud-url-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px 36px;
+    gap: 6px;
+}
+
+.cloud-url-row input {
+    min-height: 32px;
+    border-color: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.09);
+    color: #fff;
+}
+
+.cloud-url-row input::placeholder {
+    color: #b9bbbf;
 }
 
 .status-pill {

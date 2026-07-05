@@ -42,18 +42,26 @@ export function PickSaveDirectory() {
   return window['go']['main']['App']['PickSaveDirectory']();
 }
 
+export function RefreshCloudServer() {
+  return window['go']['main']['App']['RefreshCloudServer']();
+}
+
 export function RestoreBackup(arg1, arg2) {
   return window['go']['main']['App']['RestoreBackup'](arg1, arg2);
+}
+
+export function SaveCloudServerURL(arg1) {
+  return window['go']['main']['App']['SaveCloudServerURL'](arg1);
 }
 
 export function SaveGame(arg1) {
   return window['go']['main']['App']['SaveGame'](arg1);
 }
 
-export function StartSyncthing() {
-  return window['go']['main']['App']['StartSyncthing']();
-}
-
 export function SyncGame(arg1, arg2) {
   return window['go']['main']['App']['SyncGame'](arg1, arg2);
+}
+
+export function TestCloudServerURL(arg1) {
+  return window['go']['main']['App']['TestCloudServerURL'](arg1);
 }

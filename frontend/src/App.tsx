@@ -200,6 +200,56 @@ function App() {
         }
     }
 
+    async function withPendingProgress<T>(task: () => Promise<T>, message: string, currentPath: string) {
+        if (!selectedStatus) {
+            return task();
+        }
+        const status = selectedStatus;
+        let currentBytes = 6;
+        let finished = false;
+        setTransferProgress({
+            gameId: status.game.id,
+            gameName: status.game.name,
+            direction: 'pending',
+            phase: 'pending',
+            message,
+            currentBytes,
+            totalBytes: 100,
+            currentPath,
+            done: false,
+        });
+        const timer = window.setInterval(() => {
+            if (finished) {
+                return;
+            }
+            currentBytes = Math.min(86, currentBytes + (currentBytes < 45 ? 7 : 3));
+            setTransferProgress((progress) => progress ? {
+                ...progress,
+                currentBytes,
+                totalBytes: 100,
+                currentPath,
+            } : progress);
+        }, 450);
+        try {
+            return await task();
+        } finally {
+            finished = true;
+            window.clearInterval(timer);
+            setTransferProgress({
+                gameId: status.game.id,
+                gameName: status.game.name,
+                direction: 'pending',
+                phase: 'done',
+                message: '处理完成',
+                currentBytes: 100,
+                totalBytes: 100,
+                currentPath: '完成',
+                done: true,
+            });
+            window.setTimeout(() => setTransferProgress(null), 900);
+        }
+    }
+
     function appendLog(message: string) {
         const time = new Date().toLocaleTimeString();
         setActivityLog((items) => [`${time} ${message}`, ...items].slice(0, 6));
@@ -418,7 +468,11 @@ function App() {
             return;
         }
         warnIfCloudUnavailable();
-        await run(() => CompareGame(selectedStatus.game.id), (result) => {
+        await run(() => withPendingProgress(
+            () => CompareGame(selectedStatus.game.id),
+            '正在快速对比本地和云端',
+            '正在读取文件清单和差异'
+        ), (result) => {
             setCompareResult(result);
             const total = result.status.localOnly + result.status.cloudOnly + result.status.changed;
             setNotice(total === 0 ? '本地和云端一致' : '对比完成');
@@ -538,7 +592,10 @@ function App() {
         setContextMenu(null);
         setBackupMode(mode);
         const task = mode === 'local' ? ListBackups : ListCloudBackups;
-        await run(() => task(selectedStatus.game.id), (items) => {
+        const request = () => task(selectedStatus.game.id);
+        await run(() => mode === 'cloud'
+            ? withPendingProgress(request, '正在查看云端备份', '正在读取云端备份列表')
+            : request(), (items) => {
             setBackups(items);
             setBackupOpen(true);
         });

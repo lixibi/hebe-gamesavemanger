@@ -649,9 +649,6 @@ function App() {
                             </div>
                             {selectedStatus && (
                                 <div className="title-actions">
-                                    <button className="ghost compact icon-only" onClick={() => refresh()} disabled={busy} title="刷新状态">
-                                        <RefreshCw size={16}/>
-                                    </button>
                                     <button className="ghost compact" onClick={editSelectedGame} disabled={busy} title="编辑游戏配置">
                                         <Pencil size={16}/>
                                         编辑
@@ -689,6 +686,10 @@ function App() {
                                 </div>
 
                                 <div className="actions">
+                                    <button className="launch-button" onClick={launchGame} disabled={busy || !selectedStatus.game.gameExePath} title="启动游戏">
+                                        <Play size={17}/>
+                                        启动游戏
+                                    </button>
                                     {!isOfflineMode && (
                                         <>
                                             <button className="ghost" onClick={compareSelectedGame} disabled={busy} title="快速对比本地和云端差异">
@@ -705,10 +706,6 @@ function App() {
                                             </button>
                                         </>
                                     )}
-                                    <button className="launch-button" onClick={launchGame} disabled={busy || !selectedStatus.game.gameExePath} title="启动游戏">
-                                        <Play size={17}/>
-                                        启动游戏
-                                    </button>
                                     <button className="ghost" onClick={() => requestBackupAction('local')} disabled={busy} title="本地备份">
                                         <Archive size={17}/>
                                         本地备份

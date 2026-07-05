@@ -96,7 +96,7 @@ const sideLabels: Record<string, string> = {
     local: '推断本地较新',
     cloud: '推断云端较新',
     both: '双方都有变化',
-    unknown: '无法可靠判断新旧',
+    unknown: '需要人工确认',
 };
 
 function App() {
@@ -635,7 +635,7 @@ function App() {
                                 <div className="status-brief">
                                     <span>本地 {selectedStatus.localFiles}</span>
                                     <span>云端 {selectedStatus.cloudFiles}</span>
-                                    <span>{sideLabels[selectedStatus.lastChangeSide] ?? '无法判断'}</span>
+                                    <span>{freshnessLabel(selectedStatus)}</span>
                                 </div>
 
                                 <div className="latest-summary">
@@ -1029,10 +1029,18 @@ function overwriteBody(status: main.GameStatus, direction: 'cloud-to-local' | 'l
 }
 
 function freshnessText(status: main.GameStatus) {
-    const side = sideLabels[status.lastChangeSide] ?? '无法可靠判断新旧';
+    const side = freshnessLabel(status);
     const reason = status.lastChangeReason || status.message;
     const path = status.lastChangePath ? `，依据文件：${status.lastChangePath}` : '';
     return `${side}，依据：${reason}${path}`;
+}
+
+function freshnessLabel(status: main.GameStatus) {
+    const totalDiff = status.localOnly + status.cloudOnly + status.changed;
+    if (status.state === 'in-sync' || totalDiff === 0 || !status.lastChangeSide) {
+        return '内容一致';
+    }
+    return sideLabels[status.lastChangeSide] ?? '需要人工确认';
 }
 
 function pathTargetName(target: 'local' | 'cloud' | 'game') {

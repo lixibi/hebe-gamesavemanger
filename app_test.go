@@ -234,6 +234,38 @@ func TestSaveGameAllowsEmptyLocalDirectoryWithoutInitialUpload(t *testing.T) {
 	}
 }
 
+func TestSaveGameDefaultsIdentifierFromGameName(t *testing.T) {
+	root := t.TempDir()
+	app := newTestApp(t, root)
+
+	state, err := app.SaveGame(GameConfig{
+		Name: "博德之门3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Games) != 1 {
+		t.Fatalf("expected one game, got %+v", state.Games)
+	}
+	game := state.Games[0].Game
+	if game.FolderName != "博德之门3" || game.ID != "博德之门3" {
+		t.Fatalf("expected identifier to default from game name, got id=%q folder=%q", game.ID, game.FolderName)
+	}
+}
+
+func TestSaveGameRejectsInvalidIdentifier(t *testing.T) {
+	root := t.TempDir()
+	app := newTestApp(t, root)
+
+	_, err := app.SaveGame(GameConfig{
+		Name:       "Bad Identifier",
+		FolderName: "bad/name!",
+	})
+	if err == nil {
+		t.Fatal("expected invalid identifier error")
+	}
+}
+
 func TestSyncGameKeepsLatestFiveBackupsPerGame(t *testing.T) {
 	root := t.TempDir()
 	app := newTestApp(t, root)

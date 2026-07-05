@@ -21,7 +21,6 @@ import {
 import './App.css';
 import {
     CompareGame,
-    CreateCloudBackup,
     CreateManualBackup,
     DeleteGame,
     ExportGameConfig,
@@ -241,9 +240,11 @@ function App() {
 
     async function submitGame(event: FormEvent) {
         event.preventDefault();
+        const gameIdentifier = (form.folderName || form.name).trim();
         const payload = {
             ...form,
-            id: form.id || form.folderName,
+            id: form.id || gameIdentifier,
+            folderName: gameIdentifier,
             autoUploadMode: form.autoUploadMode || 'manual',
             autoUploadIntervalMinutes: Math.max(1, Number(form.autoUploadIntervalMinutes || 5)),
             saveSubdir: '',
@@ -498,32 +499,35 @@ function App() {
             return;
         }
         setContextMenu(null);
+        if (mode === 'cloud') {
+            void openBackups('cloud');
+            return;
+        }
         setConfirm({
-            title: mode === 'local' ? '本地备份' : '云端备份',
-            body: mode === 'local' ? '查看已有本地备份，或立即备份当前本地存档。' : '查看已有云端备份，或立即备份当前云端存档。',
+            title: '本地备份',
+            body: '备份当前本地存档，或从已有本地备份还原到本地游戏存档目录。',
             actions: [
                 {
-                    label: '查看备份',
+                    label: '备份',
                     className: 'primary',
-                    action: () => openBackups(mode),
+                    action: createBackup,
                 },
                 {
-                    label: '立即备份',
+                    label: '还原',
                     className: 'primary',
-                    action: () => createBackup(mode),
+                    action: () => openBackups('local'),
                 },
             ],
         });
     }
 
-    async function createBackup(mode: BackupMode) {
+    async function createBackup() {
         if (!selectedStatus) {
             return;
         }
-        const task = mode === 'local' ? CreateManualBackup : CreateCloudBackup;
-        await run(() => task(selectedStatus.game.id), (backup) => {
-            setNotice(`${mode === 'local' ? '本地' : '云端'}备份完成：${backup.name}`);
-            appendLog(`已创建 ${selectedStatus.game.name} ${mode === 'local' ? '本地' : '云端'}备份`);
+        await run(() => CreateManualBackup(selectedStatus.game.id), (backup) => {
+            setNotice(`本地备份完成：${backup.name}`);
+            appendLog(`已创建 ${selectedStatus.game.name} 本地备份`);
         });
     }
 
@@ -890,7 +894,7 @@ function App() {
                         <div className="modal-head">
                             <div>
                                 <h3>{selectedId ? '编辑游戏' : '新增游戏'}</h3>
-                                <p>配置本地存档目录、云端游戏文件夹和启动目标。</p>
+                                <p>配置本地存档目录、游戏标识和启动目标。</p>
                             </div>
                             <button className="ghost compact" type="button" onClick={importGameConfig} disabled={busy}>
                                 <FileUp size={15}/>
@@ -904,8 +908,9 @@ function App() {
                                 <input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})}/>
                             </label>
                             <label>
-                                云端文件夹名
-                                <input value={form.folderName} onChange={(event) => setForm({...form, folderName: event.target.value})} placeholder="bg3"/>
+                                游戏标识名
+                                <input value={form.folderName} onChange={(event) => setForm({...form, folderName: event.target.value})} placeholder="默认使用游戏名，如 bg3"/>
+                                <small>用于云端同步识别，只能用中文、字母、数字、-、_。</small>
                             </label>
                             <label>
                                 本机存档路径

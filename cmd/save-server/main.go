@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -240,11 +241,15 @@ func (s *server) handleSaveGameConfig(w http.ResponseWriter, r *http.Request, ga
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	payload.ID = safeName(firstNonEmpty(payload.ID, payload.FolderName, game))
-	payload.FolderName = safeName(firstNonEmpty(payload.FolderName, game, payload.ID))
+	payload.ID = normalizeGameIdentifier(firstNonEmpty(payload.ID, payload.FolderName, game))
+	payload.FolderName = normalizeGameIdentifier(firstNonEmpty(payload.FolderName, game, payload.ID))
 	payload.Name = strings.TrimSpace(payload.Name)
 	if payload.Name == "" {
 		payload.Name = payload.FolderName
+	}
+	if err := validateGameIdentifier(payload.FolderName); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
 	}
 	if payload.FolderName != game {
 		writeError(w, errors.New("game folder does not match URL"), http.StatusBadRequest)
@@ -535,8 +540,8 @@ func (s *server) loadConfig() (serverConfig, error) {
 		cfg.Password = defaultPassword
 	}
 	for i := range cfg.Games {
-		cfg.Games[i].ID = safeName(firstNonEmpty(cfg.Games[i].ID, cfg.Games[i].FolderName))
-		cfg.Games[i].FolderName = safeName(firstNonEmpty(cfg.Games[i].FolderName, cfg.Games[i].ID))
+		cfg.Games[i].ID = normalizeGameIdentifier(firstNonEmpty(cfg.Games[i].ID, cfg.Games[i].FolderName))
+		cfg.Games[i].FolderName = normalizeGameIdentifier(firstNonEmpty(cfg.Games[i].FolderName, cfg.Games[i].ID))
 		cfg.Games[i].Name = strings.TrimSpace(cfg.Games[i].Name)
 		if cfg.Games[i].Name == "" {
 			cfg.Games[i].Name = cfg.Games[i].FolderName
@@ -844,7 +849,7 @@ func safeJoin(root string, name string) (string, error) {
 
 func cleanName(name string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+	if err := validateGameIdentifier(name); err != nil {
 		return "", fmt.Errorf("invalid name: %s", name)
 	}
 	return name, nil
@@ -874,6 +879,27 @@ func safeName(input string) string {
 		}
 	}
 	return strings.Trim(builder.String(), "-")
+}
+
+func normalizeGameIdentifier(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func validateGameIdentifier(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("game identifier is required")
+	}
+	if value == "." || value == ".." || strings.HasPrefix(value, ".") {
+		return errors.New("game identifier cannot start with dot")
+	}
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' {
+			continue
+		}
+		return errors.New("game identifier can only contain letters, numbers, Chinese, - or _")
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

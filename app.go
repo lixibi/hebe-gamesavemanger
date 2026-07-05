@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -578,13 +579,49 @@ func (a *App) CreateManualBackup(id string) (BackupInfo, error) {
 	}
 
 	backupPath := filepath.Join(a.gameBackupDir(id), backupName("manual"))
-	if err := copyDirectoryVerified(game.LocalSavePath, backupPath); err != nil {
+	totalBytes := directoryTotalBytes(game.LocalSavePath)
+	currentBytes := int64(0)
+	a.emitTransferProgress(TransferProgress{
+		GameID:     game.ID,
+		GameName:   game.Name,
+		Direction:  "backup",
+		Phase:      "backup",
+		Message:    "正在备份当前存档",
+		TotalBytes: totalBytes,
+	})
+	if err := copyDirectoryVerifiedWithProgress(game.LocalSavePath, backupPath, func(delta int64, rel string) {
+		currentBytes += delta
+		a.emitTransferProgress(TransferProgress{
+			GameID:       game.ID,
+			GameName:     game.Name,
+			Direction:    "backup",
+			Phase:        "backup",
+			Message:      "正在备份当前存档",
+			CurrentBytes: currentBytes,
+			TotalBytes:   totalBytes,
+			CurrentPath:  rel,
+		})
+	}); err != nil {
 		return BackupInfo{}, err
 	}
 	if err := a.pruneBackups(id); err != nil {
 		return BackupInfo{}, err
 	}
-	return backupInfo(backupPath)
+	info, err := backupInfo(backupPath)
+	if err != nil {
+		return BackupInfo{}, err
+	}
+	a.emitTransferProgress(TransferProgress{
+		GameID:       game.ID,
+		GameName:     game.Name,
+		Direction:    "backup",
+		Phase:        "done",
+		Message:      "备份完成",
+		CurrentBytes: totalBytes,
+		TotalBytes:   totalBytes,
+		Done:         true,
+	})
+	return info, nil
 }
 
 func (a *App) ListBackups(id string) ([]BackupInfo, error) {
@@ -634,10 +671,42 @@ func (a *App) RestoreBackup(id string, backupName string) (SyncResult, error) {
 		return SyncResult{}, fmt.Errorf("backup is not a directory: %s", backupName)
 	}
 
-	currentBackup, err := a.replaceDirectory(game.LocalSavePath, backupPath, id, "restore")
+	totalBytes := directoryTotalBytes(backupPath)
+	currentBytes := int64(0)
+	a.emitTransferProgress(TransferProgress{
+		GameID:     game.ID,
+		GameName:   game.Name,
+		Direction:  "restore",
+		Phase:      "restore",
+		Message:    "正在还原备份",
+		TotalBytes: totalBytes,
+	})
+	currentBackup, err := a.replaceDirectoryWithBackupProgress(game.LocalSavePath, backupPath, id, "restore", true, func(delta int64, rel string) {
+		currentBytes += delta
+		a.emitTransferProgress(TransferProgress{
+			GameID:       game.ID,
+			GameName:     game.Name,
+			Direction:    "restore",
+			Phase:        "restore",
+			Message:      "正在还原备份",
+			CurrentBytes: currentBytes,
+			TotalBytes:   totalBytes,
+			CurrentPath:  rel,
+		})
+	})
 	if err != nil {
 		return SyncResult{}, err
 	}
+	a.emitTransferProgress(TransferProgress{
+		GameID:       game.ID,
+		GameName:     game.Name,
+		Direction:    "restore",
+		Phase:        "done",
+		Message:      "还原完成",
+		CurrentBytes: totalBytes,
+		TotalBytes:   totalBytes,
+		Done:         true,
+	})
 	return SyncResult{
 		BackupPath: currentBackup,
 		Status:     a.statusForGame(game),
@@ -829,9 +898,9 @@ func (a *App) mergeCloudGames(cfg Config) []GameConfig {
 	seen := map[string]struct{}{}
 	for _, cloud := range cloudGames {
 		base := GameConfig{
-			ID:                        safeName(firstNonEmpty(cloud.ID, cloud.FolderName)),
+			ID:                        normalizeGameIdentifier(firstNonEmpty(cloud.ID, cloud.FolderName)),
 			Name:                      strings.TrimSpace(cloud.Name),
-			FolderName:                safeName(firstNonEmpty(cloud.FolderName, cloud.ID)),
+			FolderName:                normalizeGameIdentifier(firstNonEmpty(cloud.FolderName, cloud.ID)),
 			AutoUploadMode:            "manual",
 			AutoUploadIntervalMinutes: 5,
 		}
@@ -1274,6 +1343,10 @@ func (a *App) replaceDirectory(dst string, src string, gameID string, direction 
 }
 
 func (a *App) replaceDirectoryWithBackup(dst string, src string, gameID string, direction string, keepBackup bool) (string, error) {
+	return a.replaceDirectoryWithBackupProgress(dst, src, gameID, direction, keepBackup, nil)
+}
+
+func (a *App) replaceDirectoryWithBackupProgress(dst string, src string, gameID string, direction string, keepBackup bool, progress func(delta int64, rel string)) (string, error) {
 	if strings.TrimSpace(src) == "" || strings.TrimSpace(dst) == "" {
 		return "", errors.New("source and destination paths are required")
 	}
@@ -1314,7 +1387,7 @@ func (a *App) replaceDirectoryWithBackup(dst string, src string, gameID string, 
 
 	stage := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".gsm-staging-"+time.Now().Format("20060102150405"))
 	_ = os.RemoveAll(stage)
-	if err := copyDirectoryVerified(src, stage); err != nil {
+	if err := copyDirectoryVerifiedWithProgress(src, stage, progress); err != nil {
 		return "", err
 	}
 	defer os.RemoveAll(stage)
@@ -1684,31 +1757,34 @@ func backupInfo(path string) (BackupInfo, error) {
 }
 
 func (g *GameConfig) normalizeAndValidate() error {
-	g.ID = safeName(strings.TrimSpace(g.ID))
 	g.Name = strings.TrimSpace(g.Name)
-	g.FolderName = safeName(strings.TrimSpace(g.FolderName))
+	g.ID = normalizeGameIdentifier(g.ID)
+	g.FolderName = normalizeGameIdentifier(g.FolderName)
 	g.LocalSavePath = strings.TrimSpace(g.LocalSavePath)
 	g.GameExePath = strings.TrimSpace(g.GameExePath)
 	g.GameArgs = strings.TrimSpace(g.GameArgs)
 	g.AutoUploadMode = strings.TrimSpace(g.AutoUploadMode)
 	g.SaveSubdir = ""
-	g.applyDefaults()
 
 	if g.Name == "" {
 		return errors.New("game name is required")
 	}
 	if g.FolderName == "" {
-		return errors.New("cloud folder name is required")
+		g.FolderName = defaultGameIdentifier(g.Name)
+	}
+	if err := validateGameIdentifier(g.FolderName); err != nil {
+		return err
 	}
 	if g.ID == "" {
 		g.ID = g.FolderName
 	}
+	g.applyDefaults()
 	return nil
 }
 
 func (g *GameConfig) applyDefaults() {
 	if strings.TrimSpace(g.ID) == "" {
-		g.ID = safeName(g.FolderName)
+		g.ID = normalizeGameIdentifier(g.FolderName)
 	}
 	switch g.AutoUploadMode {
 	case "", "off", "manual", "ask-on-exit", "interval", "on-exit":
@@ -1975,6 +2051,10 @@ func describeDiff(status GameStatus) (string, string) {
 }
 
 func copyDirectory(src string, dst string) error {
+	return copyDirectoryWithProgress(src, dst, nil)
+}
+
+func copyDirectoryWithProgress(src string, dst string, progress func(delta int64, rel string)) error {
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -1993,7 +2073,7 @@ func copyDirectory(src string, dst string) error {
 		if err != nil {
 			return err
 		}
-		if err := copyFile(path, target, info.Mode()); err != nil {
+		if err := copyFileWithProgress(path, target, info.Mode(), filepath.ToSlash(rel), progress); err != nil {
 			return err
 		}
 		return os.Chtimes(target, info.ModTime(), info.ModTime())
@@ -2001,6 +2081,10 @@ func copyDirectory(src string, dst string) error {
 }
 
 func copyFile(src string, dst string, mode os.FileMode) error {
+	return copyFileWithProgress(src, dst, mode, "", nil)
+}
+
+func copyFileWithProgress(src string, dst string, mode os.FileMode, rel string, progress func(delta int64, rel string)) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -2017,7 +2101,7 @@ func copyFile(src string, dst string, mode os.FileMode) error {
 	}
 	defer output.Close()
 
-	_, err = io.Copy(output, input)
+	_, err = copyWithProgress(output, input, rel, progress)
 	return err
 }
 
@@ -2160,10 +2244,30 @@ func safeArchiveTarget(root string, name string) (string, error) {
 }
 
 func copyDirectoryVerified(src string, dst string) error {
-	if err := copyDirectory(src, dst); err != nil {
+	return copyDirectoryVerifiedWithProgress(src, dst, nil)
+}
+
+func copyDirectoryVerifiedWithProgress(src string, dst string, progress func(delta int64, rel string)) error {
+	if err := copyDirectoryWithProgress(src, dst, progress); err != nil {
 		return err
 	}
 	return verifyDirectoriesEqual(src, dst)
+}
+
+func directoryTotalBytes(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	return total
 }
 
 func verifyDirectoriesEqual(left string, right string) error {
@@ -2379,6 +2483,48 @@ func safeName(value string) string {
 		}
 	}
 	return strings.Trim(b.String(), ".-_")
+}
+
+func defaultGameIdentifier(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.TrimSpace(value) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+			lastDash = false
+		case unicode.IsSpace(r):
+			if !lastDash {
+				b.WriteRune('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-_")
+}
+
+func normalizeGameIdentifier(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func validateGameIdentifier(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("游戏标识名不能为空")
+	}
+	if value == "." || value == ".." || strings.HasPrefix(value, ".") {
+		return errors.New("游戏标识名不能以点开头")
+	}
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' {
+			continue
+		}
+		return errors.New("游戏标识名只能包含中文、字母、数字、- 或 _")
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

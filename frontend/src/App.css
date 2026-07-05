@@ -103,7 +103,7 @@ button {
     width: 100%;
     min-height: 48px;
     display: grid;
-    grid-template-columns: 12px minmax(0, 1fr);
+    grid-template-columns: 28px minmax(0, 1fr);
     align-items: center;
     gap: 12px;
     padding: 8px 10px;
@@ -132,6 +132,28 @@ button {
     height: 10px;
     border-radius: 50%;
     background: #9aa0a6;
+}
+
+.game-icon-wrap {
+    position: relative;
+    width: 28px;
+    height: 28px;
+}
+
+.game-icon {
+    width: 28px;
+    height: 28px;
+    display: block;
+    border-radius: 6px;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.dot.mini {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    border: 2px solid #24272d;
 }
 
 .dot.in-sync {

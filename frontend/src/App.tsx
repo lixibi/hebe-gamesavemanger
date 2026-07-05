@@ -480,7 +480,14 @@ function App() {
                             onClick={() => chooseGame(status)}
                             onContextMenu={(event) => showContextMenu(event, status)}
                         >
-                            <span className={`dot ${status.state}`}/>
+                            {status.iconData ? (
+                                <span className="game-icon-wrap">
+                                    <img className="game-icon" src={status.iconData} alt=""/>
+                                    <span className={`dot mini ${status.state}`}/>
+                                </span>
+                            ) : (
+                                <span className={`dot ${status.state}`}/>
+                            )}
                             <span>
                                 <strong>{status.game.name}</strong>
                                 <small>{status.game.folderName}</small>

@@ -30,6 +30,7 @@ export namespace main {
 	}
 	export class GameStatus {
 	    game: GameConfig;
+	    iconData: string;
 	    cloudPath: string;
 	    state: string;
 	    message: string;
@@ -56,6 +57,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.game = this.convertValues(source["game"], GameConfig);
+	        this.iconData = source["iconData"];
 	        this.cloudPath = source["cloudPath"];
 	        this.state = source["state"];
 	        this.message = source["message"];

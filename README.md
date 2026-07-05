@@ -122,6 +122,7 @@ X-Hebe-Password: hebesave
 
 - Windows 路径会原样保存到 `config/games.json`，例如 `C:\Users\you\AppData\Local\...`。
 - Windows 下直接启动配置的游戏程序并传入启动参数，后台命令不会弹出额外 cmd 窗口；`steam://` 等协议地址会交给系统打开。
+- 游戏启动目标是 `.exe` 时，Windows 客户端会自动提取 exe 图标并缓存，用作左侧游戏列表图标。
 - 客户端默认连接 `http://127.0.0.1:27843`，可在 `config/games.json` 的 `cloudServerURL` 修改为 NAS 或公网服务地址。
 - 程序启用单实例锁，重复打开会唤起已有窗口，不再多开。
 

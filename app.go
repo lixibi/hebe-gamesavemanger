@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ type App struct {
 	configPath   string
 	dataDir      string
 	backupDir    string
+	iconCacheDir string
 	autoSessions map[string]chan struct{}
 	autoLock     sync.Mutex
 }
@@ -72,6 +74,7 @@ type AppState struct {
 
 type GameStatus struct {
 	Game             GameConfig `json:"game"`
+	IconData         string     `json:"iconData"`
 	CloudPath        string     `json:"cloudPath"`
 	State            string     `json:"state"`
 	Message          string     `json:"message"`
@@ -150,6 +153,7 @@ func newAppAt(root string) *App {
 		configPath:   filepath.Join(root, "config", "games.json"),
 		dataDir:      filepath.Join(root, "data"),
 		backupDir:    filepath.Join(root, "backups"),
+		iconCacheDir: filepath.Join(root, "cache", "icons"),
 		autoSessions: map[string]chan struct{}{},
 	}
 }
@@ -573,6 +577,7 @@ func (a *App) ensureLayout() error {
 		filepath.Dir(a.configPath),
 		a.dataDir,
 		a.backupDir,
+		a.iconCacheDir,
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -694,6 +699,7 @@ func (a *App) statusForGame(game GameConfig) GameStatus {
 	game.applyDefaults()
 	status := GameStatus{
 		Game:          game,
+		IconData:      a.gameIconData(game),
 		CloudPath:     a.cloudSavePath(game),
 		LastCheckedAt: time.Now().Format(time.RFC3339),
 	}
@@ -1093,6 +1099,38 @@ func (a *App) replaceDirectoryWithBackup(dst string, src string, gameID string, 
 
 func (a *App) gameBackupDir(gameID string) string {
 	return filepath.Join(a.backupDir, safeName(gameID))
+}
+
+func (a *App) gameIconData(game GameConfig) string {
+	exePath := strings.TrimSpace(game.GameExePath)
+	if runtime.GOOS != "windows" || exePath == "" || isURLTarget(exePath) || strings.ToLower(filepath.Ext(exePath)) != ".exe" {
+		return ""
+	}
+	info, err := os.Stat(exePath)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	cachePath := filepath.Join(a.iconCacheDir, safeName(firstNonEmpty(game.ID, game.FolderName))+".png")
+	if cacheInfo, err := os.Stat(cachePath); err != nil || cacheInfo.ModTime().Before(info.ModTime()) {
+		if err := extractWindowsExeIcon(exePath, cachePath); err != nil {
+			return ""
+		}
+	}
+	raw, err := os.ReadFile(cachePath)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
+}
+
+func extractWindowsExeIcon(exePath string, pngPath string) error {
+	if err := os.MkdirAll(filepath.Dir(pngPath), 0o755); err != nil {
+		return err
+	}
+	script := `$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.Drawing; $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($args[0]); if ($null -eq $icon) { exit 2 }; $bmp = $icon.ToBitmap(); $bmp.Save($args[1], [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $icon.Dispose()`
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script, exePath, pngPath)
+	hideCommandWindow(cmd)
+	return cmd.Run()
 }
 
 func backupName(direction string) string {

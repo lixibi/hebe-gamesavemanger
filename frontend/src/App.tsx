@@ -295,11 +295,11 @@ function App() {
         });
     }
 
-    async function startSyncthing() {
+    async function refreshCloudService() {
         await run(StartSyncthing, (state) => {
             setAppState(state);
-            setNotice('已尝试启动 Syncthing');
-            appendLog('已尝试启动 Syncthing');
+            setNotice('已刷新云服务连接状态');
+            appendLog('已刷新云服务连接状态');
         });
     }
 
@@ -422,7 +422,7 @@ function App() {
                     <Gamepad2 size={26}/>
                     <div>
                         <h1>hebe游戏存档同步</h1>
-                        <span>Wails + Syncthing</span>
+                        <span>自建云存档服务</span>
                     </div>
                 </div>
 
@@ -451,12 +451,12 @@ function App() {
 
                 <div className="syncthing">
                     <span className={`status-pill ${appState?.syncthingStatus ?? 'stopped'}`}>
-                        {appState?.syncthingStatus === 'running' ? 'Syncthing 运行中' : 'Syncthing 未运行'}
+                        {appState?.syncthingStatus === 'running' ? '云服务已连接' : '云服务未连接'}
                     </span>
                     <p>{appState?.syncthingMessage ?? '正在读取状态'}</p>
-                    <button className="ghost full" onClick={startSyncthing} disabled={busy} title="启动 Syncthing">
+                    <button className="ghost full" onClick={refreshCloudService} disabled={busy} title="刷新云服务">
                         <RotateCcw size={16}/>
-                        启动 Syncthing
+                        刷新云服务
                     </button>
                 </div>
             </aside>

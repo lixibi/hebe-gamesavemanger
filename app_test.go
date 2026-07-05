@@ -9,7 +9,7 @@ import (
 
 func TestStatusForGameDetectsCloudOnlyFiles(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "bg3",
 		Name:          "Baldur's Gate 3",
@@ -35,7 +35,7 @@ func TestStatusForGameDetectsCloudOnlyFiles(t *testing.T) {
 
 func TestCloudPathUsesGameFolderDirectly(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "bg3",
 		Name:          "Baldur's Gate 3",
@@ -51,7 +51,7 @@ func TestCloudPathUsesGameFolderDirectly(t *testing.T) {
 
 func TestStatusForGameDetectsChangedFileNewerSide(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "changed",
 		Name:          "Changed",
@@ -83,7 +83,7 @@ func TestStatusForGameDetectsChangedFileNewerSide(t *testing.T) {
 
 func TestStatusForGameTreatsBothSidesChangingAsConflict(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "conflict",
 		Name:          "Conflict",
@@ -102,7 +102,7 @@ func TestStatusForGameTreatsBothSidesChangingAsConflict(t *testing.T) {
 
 func TestStatusForGameScansAllNestedFileFormats(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "mixed",
 		Name:          "Mixed Saves",
@@ -135,7 +135,7 @@ func TestStatusForGameScansAllNestedFileFormats(t *testing.T) {
 
 func TestSyncGameBacksUpDestinationBeforeOverwrite(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "bg3",
 		Name:          "Baldur's Gate 3",
@@ -169,7 +169,7 @@ func TestSyncGameBacksUpDestinationBeforeOverwrite(t *testing.T) {
 
 func TestSyncGameKeepsLatestFiveBackupsPerGame(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "bg3",
 		Name:          "Baldur's Gate 3",
@@ -207,7 +207,7 @@ func TestSyncGameKeepsLatestFiveBackupsPerGame(t *testing.T) {
 
 func TestManualBackupAndRestoreBackup(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "restore",
 		Name:          "Restore",
@@ -243,7 +243,7 @@ func TestManualBackupAndRestoreBackup(t *testing.T) {
 
 func TestAutoUploadBacksUpCloudOnlyOncePerSession(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "auto",
 		Name:          "Auto",
@@ -295,7 +295,7 @@ func TestAutoUploadBacksUpCloudOnlyOncePerSession(t *testing.T) {
 
 func TestSyncGamePreservesEmptyDirectories(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	game := GameConfig{
 		ID:            "empty-dirs",
 		Name:          "Empty Dirs",
@@ -328,7 +328,7 @@ func TestSyncGamePreservesEmptyDirectories(t *testing.T) {
 
 func TestSyncGameRejectsNestedSourceAndDestination(t *testing.T) {
 	root := t.TempDir()
-	app := newAppAt(root)
+	app := newTestApp(t, root)
 	src := filepath.Join(root, "save")
 	dst := filepath.Join(src, "nested")
 	writeTestFile(t, filepath.Join(src, "slot.sav"), "save")
@@ -355,4 +355,16 @@ func readTestFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func newTestApp(t *testing.T, root string) *App {
+	t.Helper()
+	app := newAppAt(root)
+	if err := app.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.saveConfig(Config{CloudServerURL: "local", Games: []GameConfig{}}); err != nil {
+		t.Fatal(err)
+	}
+	return app
 }

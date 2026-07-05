@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +25,10 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const maxBackupsPerGame = 5
+const (
+	maxBackupsPerGame     = 5
+	defaultCloudServerURL = "http://127.0.0.1:27843"
+)
 
 type App struct {
 	ctx           context.Context
@@ -36,7 +43,8 @@ type App struct {
 }
 
 type Config struct {
-	Games []GameConfig `json:"games"`
+	CloudServerURL string       `json:"cloudServerURL"`
+	Games          []GameConfig `json:"games"`
 }
 
 type GameConfig struct {
@@ -55,6 +63,7 @@ type AppState struct {
 	RootDir          string       `json:"rootDir"`
 	ConfigPath       string       `json:"configPath"`
 	DataDir          string       `json:"dataDir"`
+	CloudServerURL   string       `json:"cloudServerURL"`
 	SyncthingStatus  string       `json:"syncthingStatus"`
 	SyncthingMessage string       `json:"syncthingMessage"`
 	Games            []GameStatus `json:"games"`
@@ -147,15 +156,11 @@ func newAppAt(root string) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	_ = a.ensureLayout()
-	a.startSyncthing()
 }
 
 func (a *App) GetAppState() (AppState, error) {
 	if err := a.ensureLayout(); err != nil {
 		return AppState{}, err
-	}
-	if !isPortOpen("127.0.0.1:8384", 300*time.Millisecond) {
-		a.startSyncthing()
 	}
 
 	cfg, err := a.loadConfig()
@@ -168,11 +173,12 @@ func (a *App) GetAppState() (AppState, error) {
 		statuses = append(statuses, a.statusForGame(game))
 	}
 
-	syncStatus, syncMessage := a.syncthingStatus()
+	syncStatus, syncMessage := a.cloudServerStatus(cfg.CloudServerURL)
 	return AppState{
 		RootDir:          a.rootDir,
 		ConfigPath:       a.configPath,
 		DataDir:          a.dataDir,
+		CloudServerURL:   cfg.CloudServerURL,
 		SyncthingStatus:  syncStatus,
 		SyncthingMessage: syncMessage,
 		Games:            statuses,
@@ -210,9 +216,7 @@ func (a *App) SaveGame(game GameConfig) (AppState, error) {
 	if err := a.saveConfig(cfg); err != nil {
 		return AppState{}, err
 	}
-	if err := os.MkdirAll(a.cloudSavePath(game), 0o755); err != nil {
-		return AppState{}, err
-	}
+	_ = os.MkdirAll(a.cloudSavePath(game), 0o755)
 	return a.GetAppState()
 }
 
@@ -242,27 +246,46 @@ func (a *App) SyncGame(id string, direction string) (SyncResult, error) {
 		return SyncResult{}, err
 	}
 
-	var src, dst string
+	if a.cloudBaseURL() == "local" {
+		var src, dst string
+		switch direction {
+		case "cloud-to-local":
+			src = a.cloudSavePath(game)
+			dst = game.LocalSavePath
+		case "local-to-cloud":
+			src = game.LocalSavePath
+			dst = a.cloudSavePath(game)
+		default:
+			return SyncResult{}, fmt.Errorf("unknown sync direction: %s", direction)
+		}
+		backup, err := a.replaceDirectory(dst, src, id, direction)
+		if err != nil {
+			return SyncResult{}, err
+		}
+		return SyncResult{BackupPath: backup, Status: a.statusForGame(game)}, nil
+	}
+
 	switch direction {
 	case "cloud-to-local":
-		src = a.cloudSavePath(game)
-		dst = game.LocalSavePath
+		stage, cleanup, err := a.downloadCloudToTemp(game)
+		if err != nil {
+			return SyncResult{}, err
+		}
+		defer cleanup()
+		backup, err := a.replaceDirectory(game.LocalSavePath, stage, id, direction)
+		if err != nil {
+			return SyncResult{}, err
+		}
+		return SyncResult{BackupPath: backup, Status: a.statusForGame(game)}, nil
 	case "local-to-cloud":
-		src = game.LocalSavePath
-		dst = a.cloudSavePath(game)
+		backup, err := a.uploadLocalToCloud(game, true)
+		if err != nil {
+			return SyncResult{}, err
+		}
+		return SyncResult{BackupPath: backup, Status: a.statusForGame(game)}, nil
 	default:
 		return SyncResult{}, fmt.Errorf("unknown sync direction: %s", direction)
 	}
-
-	backup, err := a.replaceDirectory(dst, src, id, direction)
-	if err != nil {
-		return SyncResult{}, err
-	}
-
-	return SyncResult{
-		BackupPath: backup,
-		Status:     a.statusForGame(game),
-	}, nil
 }
 
 func (a *App) LaunchGame(id string) error {
@@ -283,8 +306,6 @@ func (a *App) LaunchGame(id string) error {
 }
 
 func (a *App) StartSyncthing() (AppState, error) {
-	a.startSyncthing()
-	waitForPort("127.0.0.1:8384", 5*time.Second)
 	return a.GetAppState()
 }
 
@@ -473,7 +494,7 @@ func (a *App) ensureLayout() error {
 		}
 	}
 	if _, err := os.Stat(a.configPath); errors.Is(err, os.ErrNotExist) {
-		return a.saveConfig(Config{Games: []GameConfig{}})
+		return a.saveConfig(Config{CloudServerURL: defaultCloudServerURL, Games: []GameConfig{}})
 	}
 	return nil
 }
@@ -488,12 +509,15 @@ func (a *App) loadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if strings.TrimSpace(string(raw)) == "" {
-		return Config{Games: []GameConfig{}}, nil
+		return Config{CloudServerURL: defaultCloudServerURL, Games: []GameConfig{}}, nil
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, err
+	}
+	if strings.TrimSpace(cfg.CloudServerURL) == "" {
+		cfg.CloudServerURL = defaultCloudServerURL
 	}
 	for i := range cfg.Games {
 		cfg.Games[i].applyDefaults()
@@ -531,7 +555,7 @@ func (a *App) statusForGame(game GameConfig) GameStatus {
 	}
 
 	localManifest, localErr := scanDirectory(game.LocalSavePath)
-	cloudManifest, cloudErr := scanDirectory(status.CloudPath)
+	cloudManifest, cloudErr := a.cloudManifest(game)
 
 	if localErr != nil {
 		status.State = "missing-local"
@@ -563,6 +587,159 @@ func (a *App) statusForGame(game GameConfig) GameStatus {
 func (a *App) cloudSavePath(game GameConfig) string {
 	game.applyDefaults()
 	return filepath.Join(a.dataDir, game.FolderName)
+}
+
+type cloudManifestResponse struct {
+	Files map[string]struct {
+		Hash    string `json:"hash"`
+		Size    int64  `json:"size"`
+		ModTime string `json:"modTime"`
+	} `json:"files"`
+}
+
+type cloudUploadResponse struct {
+	Backup string `json:"backup"`
+}
+
+func (a *App) cloudBaseURL() string {
+	cfg, err := a.loadConfig()
+	if err != nil || strings.TrimSpace(cfg.CloudServerURL) == "" {
+		return defaultCloudServerURL
+	}
+	return strings.TrimRight(cfg.CloudServerURL, "/")
+}
+
+func (a *App) cloudGameURL(game GameConfig, suffix string) string {
+	game.applyDefaults()
+	return a.cloudBaseURL() + "/api/games/" + url.PathEscape(game.FolderName) + suffix
+}
+
+func (a *App) cloudManifest(game GameConfig) (map[string]fileInfo, error) {
+	if a.cloudBaseURL() == "local" {
+		return scanDirectory(a.cloudSavePath(game))
+	}
+	req, err := http.NewRequest(http.MethodGet, a.cloudGameURL(game, "/manifest"), nil)
+	if err != nil {
+		return nil, err
+	}
+	client := http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	var payload cloudManifestResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	files := map[string]fileInfo{}
+	for path, file := range payload.Files {
+		modTime, err := time.Parse(time.RFC3339Nano, file.ModTime)
+		if err != nil {
+			modTime, _ = time.Parse(time.RFC3339, file.ModTime)
+		}
+		files[path] = fileInfo{
+			Hash:    file.Hash,
+			Size:    file.Size,
+			ModTime: modTime,
+		}
+	}
+	return files, nil
+}
+
+func (a *App) downloadCloudToTemp(game GameConfig) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "hebe-cloud-download-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	if a.cloudBaseURL() == "local" {
+		if err := copyDirectoryVerified(a.cloudSavePath(game), tmp); err != nil {
+			cleanup()
+			return "", cleanup, err
+		}
+		return tmp, cleanup, nil
+	}
+	req, err := http.NewRequest(http.MethodGet, a.cloudGameURL(game, "/archive"), nil)
+	if err != nil {
+		cleanup()
+		return "", cleanup, err
+	}
+	client := http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		cleanup()
+		return "", cleanup, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		cleanup()
+		return "", cleanup, fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	if err := extractTarGz(resp.Body, tmp); err != nil {
+		cleanup()
+		return "", cleanup, err
+	}
+	return tmp, cleanup, nil
+}
+
+func (a *App) uploadLocalToCloud(game GameConfig, backup bool) (string, error) {
+	if a.cloudBaseURL() == "local" {
+		return a.replaceDirectoryWithBackup(a.cloudSavePath(game), game.LocalSavePath, game.ID, "auto-upload", backup)
+	}
+	reader, writer := io.Pipe()
+	go func() {
+		err := writeTarGz(writer, game.LocalSavePath)
+		_ = writer.CloseWithError(err)
+	}()
+	req, err := http.NewRequest(http.MethodPut, a.cloudGameURL(game, "/archive"), reader)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/gzip")
+	client := http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("cloud server returned %s", resp.Status)
+	}
+	var payload cloudUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.Backup == "" || !backup {
+		return "", nil
+	}
+	return "cloud:" + payload.Backup, nil
+}
+
+func (a *App) cloudServerStatus(baseURL string) (string, string) {
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = defaultCloudServerURL
+	}
+	if baseURL == "local" {
+		return "running", "本地 data 兼容模式，仅用于测试或离线调试"
+	}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/health", nil)
+	if err != nil {
+		return "stopped", err.Error()
+	}
+	client := http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "stopped", fmt.Sprintf("云服务未连接：%s", err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "stopped", fmt.Sprintf("云服务返回 %s", resp.Status)
+	}
+	return "running", "自建云存档服务已连接：" + strings.TrimRight(baseURL, "/")
 }
 
 func (a *App) replaceDirectory(dst string, src string, gameID string, direction string) (string, error) {
@@ -774,7 +951,7 @@ func (a *App) autoUploadIfLocalNewer(session *autoUploadSession) error {
 		return nil
 	}
 	backup := !session.cloudBackedUp
-	if _, err := a.replaceDirectoryWithBackup(a.cloudSavePath(session.game), session.game.LocalSavePath, session.game.ID, "auto-upload", backup); err != nil {
+	if _, err := a.uploadLocalToCloud(session.game, backup); err != nil {
 		return err
 	}
 	session.cloudBackedUp = true
@@ -1143,6 +1320,105 @@ func copyFile(src string, dst string, mode os.FileMode) error {
 
 	_, err = io.Copy(output, input)
 	return err
+}
+
+func writeTarGz(writer io.Writer, root string) error {
+	gz := gzip.NewWriter(writer)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(rel)
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		_, err = io.Copy(tw, file)
+		return err
+	})
+}
+
+func extractTarGz(reader io.Reader, dst string) error {
+	gz, err := gzip.NewReader(reader)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if filepath.Clean(filepath.FromSlash(header.Name)) == "." {
+			continue
+		}
+		target, err := safeArchiveTarget(dst, header.Name)
+		if err != nil {
+			return err
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			file, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(file, tr); err != nil {
+				_ = file.Close()
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
+			_ = os.Chtimes(target, header.ModTime, header.ModTime)
+		default:
+			return fmt.Errorf("unsupported archive entry: %s", header.Name)
+		}
+	}
+}
+
+func safeArchiveTarget(root string, name string) (string, error) {
+	name = filepath.Clean(filepath.FromSlash(name))
+	if name == "." || filepath.IsAbs(name) || strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("unsafe archive path: %s", name)
+	}
+	return filepath.Join(root, name), nil
 }
 
 func copyDirectoryVerified(src string, dst string) error {

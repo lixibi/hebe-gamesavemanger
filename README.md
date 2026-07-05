@@ -1,6 +1,6 @@
 # hebe游戏存档同步
 
-Wails 前端 + Go 后端的游戏存档管理器。Syncthing 负责同步 `data/`，本程序负责维护游戏配置、对比本地/云端存档差异，并在确认后执行双向覆盖。
+Wails 前端 + Go 后端的游戏存档管理器。`dev` 分支开始移除 Syncthing 依赖，改为连接自建的轻量 Go 云存档服务，对比本地/云端存档差异，并在确认后执行双向覆盖。
 
 ## 目录约定
 
@@ -9,22 +9,15 @@ Wails 前端 + Go 后端的游戏存档管理器。Syncthing 负责同步 `data/
 ```text
 HebeGameSaveSync/
   hebe-game-save-sync.exe
-  syncthing.exe
   data/
     bg3/
-      <游戏原始存档结构>
+      <本地缓存，可自动生成>
   config/
     games.json
   backups/
 ```
 
-也支持把 Syncthing 放在 `syncthing/syncthing.exe`。如果存在以下任意配置目录，程序启动 Syncthing 时会自动传入 `-home`：
-
-```text
-syncthing-home/config.xml
-syncthing/config/config.xml
-config/syncthing/config.xml
-```
+云端服务的数据目录按 `云存档根目录/<folderName>` 保存游戏原始存档结构，备份按 `云存档根目录/.backups/<folderName>` 保存。
 
 ## 配置文件
 
@@ -32,6 +25,7 @@ config/syncthing/config.xml
 
 ```json
 {
+  "cloudServerURL": "http://127.0.0.1:27843",
   "games": [
     {
       "id": "bg3",
@@ -45,22 +39,53 @@ config/syncthing/config.xml
 }
 ```
 
-云端路径会映射为：
+云端路径会映射为服务端：
 
 ```text
-data/<folderName>
+<cloud-root>/<folderName>
 ```
 
-例如上面的配置对应 `data/bg3`，程序会把该游戏的所有存档文件和子目录原样放在这个文件夹里。
+例如上面的配置对应服务端数据目录里的 `bg3`，程序会把该游戏的所有存档文件和子目录原样上传到这个文件夹里。
+
+## 云存档服务
+
+默认端口：`27843`。
+
+Docker 运行：
+
+```bash
+docker build -f Dockerfile.save-server -t hebe-save-server .
+docker run -d --name hebe-save-server \
+  -p 27843:27843 \
+  -v /path/to/cloud-saves:/data \
+  hebe-save-server
+```
+
+也可以直接运行：
+
+```bash
+go run ./cmd/save-server -addr :27843 -root ./cloud-saves
+```
+
+服务端提供：
+
+- `GET /health`：健康检查。
+- `GET /api/games`：列出云端游戏目录。
+- `GET /api/games/{game}/manifest`：列出文件 hash、大小、修改时间。
+- `GET /api/games/{game}/archive`：下载云端存档 tar.gz。
+- `PUT /api/games/{game}/archive`：上传本地存档 tar.gz，服务端替换前自动备份旧云端。
+- `GET /api/games/{game}/backups`：列出云端最近 5 个备份。
+- `POST /api/games/{game}/backups`：手动创建云端备份。
+- `POST /api/games/{game}/backups/restore/{backup}`：把云端备份还原为当前云端存档。
 
 ## 同步策略
 
 - 递归扫描本地存档目录和云端目录下的所有文件，不按扩展名过滤，按相对路径 + SHA-256 判断是否一致。
-- 变化判断来自本地/云端目录的实时重扫，不依赖 Syncthing 的文件变化事件。
+- 变化判断来自本地目录扫描和云服务 manifest，不依赖 Syncthing 的文件变化事件。
 - 新旧判断结合新增文件、缺失文件、同名文件内容变化、文件修改时间；双方都有变化时标记为冲突，不自动猜测。
 - 文件访问时间不作为覆盖依据，因为扫描和杀毒软件都可能更新访问时间，容易制造误判。
 - 云端覆盖本地、本地覆盖云端都必须在界面中二次确认，并显示推断的新旧方、判断依据、来源目录、目标目录。
-- 覆盖前会把目标目录完整复制到 `backups/<gameId>/<time>_<direction>`，并校验备份与原目录一致。
+- 本地覆盖前会把目标目录完整复制到 `backups/<gameId>/<time>_<direction>`，并校验备份与原目录一致；云端覆盖前由服务端备份到 `.backups/<game>`。
 - 备份按游戏分组保存到 `backups/<gameId>/`，每个游戏只保留最新 5 个备份。
 - 真正覆盖时会先复制到临时目录并校验，再替换目标目录；失败时会尝试从备份恢复。
 - 文件校验覆盖任意扩展名文件、无扩展名文件、隐藏文件、多层子目录文件，并保留空目录。
@@ -83,8 +108,7 @@ data/<folderName>
 
 - Windows 路径会原样保存到 `config/games.json`，例如 `C:\Users\you\AppData\Local\...`。
 - Windows 下直接启动配置的游戏程序并传入启动参数，后台命令不会弹出额外 cmd 窗口。
-- 启动程序时会检查 `127.0.0.1:8384`，默认 Syncthing 端口已可连接就不会重复启动 Syncthing。
-- 默认寻找 `hebe-game-save-sync.exe` 同目录下的 `syncthing.exe`，也支持 `syncthing/syncthing.exe`；开发运行时也会兼容当前工作目录。
+- 客户端默认连接 `http://127.0.0.1:27843`，可在 `config/games.json` 的 `cloudServerURL` 修改为 NAS 或公网服务地址。
 - 程序启用单实例锁，重复打开会唤起已有窗口，不再多开。
 
 ## 开发
@@ -109,6 +133,12 @@ Windows amd64 构建：
 
 ```bash
 wails build -platform windows/amd64 -clean
+```
+
+服务端 Linux amd64 构建：
+
+```bash
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/bin/hebe-save-server ./cmd/save-server
 ```
 
 本项目已在 macOS 上成功构建 Windows 目标，输出为：

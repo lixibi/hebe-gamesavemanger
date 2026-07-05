@@ -98,6 +98,7 @@ export namespace main {
 	    rootDir: string;
 	    configPath: string;
 	    dataDir: string;
+	    cloudServerURL: string;
 	    syncthingStatus: string;
 	    syncthingMessage: string;
 	    games: GameStatus[];
@@ -111,6 +112,7 @@ export namespace main {
 	        this.rootDir = source["rootDir"];
 	        this.configPath = source["configPath"];
 	        this.dataDir = source["dataDir"];
+	        this.cloudServerURL = source["cloudServerURL"];
 	        this.syncthingStatus = source["syncthingStatus"];
 	        this.syncthingMessage = source["syncthingMessage"];
 	        this.games = this.convertValues(source["games"], GameStatus);

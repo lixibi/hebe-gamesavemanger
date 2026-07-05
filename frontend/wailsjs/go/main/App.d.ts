@@ -18,6 +18,10 @@ export function ListBackups(arg1:string):Promise<Array<main.BackupInfo>>;
 
 export function OpenGamePath(arg1:string,arg2:string):Promise<void>;
 
+export function PickGameExe():Promise<string>;
+
+export function PickSaveDirectory():Promise<string>;
+
 export function RestoreBackup(arg1:string,arg2:string):Promise<main.SyncResult>;
 
 export function SaveGame(arg1:main.GameConfig):Promise<main.AppState>;

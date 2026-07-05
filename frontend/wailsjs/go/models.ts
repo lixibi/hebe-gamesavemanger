@@ -6,6 +6,7 @@ export namespace main {
 	    folderName: string;
 	    localSavePath: string;
 	    gameExePath: string;
+	    gameArgs: string;
 	    autoUploadMode: string;
 	    autoUploadIntervalMinutes: number;
 	    saveSubdir?: string;
@@ -21,6 +22,7 @@ export namespace main {
 	        this.folderName = source["folderName"];
 	        this.localSavePath = source["localSavePath"];
 	        this.gameExePath = source["gameExePath"];
+	        this.gameArgs = source["gameArgs"];
 	        this.autoUploadMode = source["autoUploadMode"];
 	        this.autoUploadIntervalMinutes = source["autoUploadIntervalMinutes"];
 	        this.saveSubdir = source["saveSubdir"];

@@ -27,6 +27,8 @@ import {
     LaunchGame,
     ListBackups,
     OpenGamePath,
+    PickGameExe,
+    PickSaveDirectory,
     RestoreBackup,
     SaveGame,
     StartSyncthing,
@@ -59,6 +61,7 @@ const emptyGame: main.GameConfig = {
     folderName: '',
     localSavePath: '',
     gameExePath: '',
+    gameArgs: '',
     autoUploadMode: 'manual',
     autoUploadIntervalMinutes: 5,
     saveSubdir: '',
@@ -345,6 +348,22 @@ function App() {
         });
     }
 
+    async function pickGameExe() {
+        await run(PickGameExe, (path) => {
+            if (path) {
+                setForm((current) => ({...current, gameExePath: path}));
+            }
+        });
+    }
+
+    async function pickSaveDirectory() {
+        await run(PickSaveDirectory, (path) => {
+            if (path) {
+                setForm((current) => ({...current, localSavePath: path}));
+            }
+        });
+    }
+
     async function createManualBackup() {
         if (!selectedStatus) {
             return;
@@ -513,7 +532,7 @@ function App() {
                                         <CloudUpload size={17}/>
                                         上传本地
                                     </button>
-                                    <button className="ghost" onClick={launchGame} disabled={busy || !selectedStatus.game.gameExePath} title="启动游戏">
+                                    <button className="launch-button" onClick={launchGame} disabled={busy || !selectedStatus.game.gameExePath} title="启动游戏">
                                         <Play size={17}/>
                                         启动游戏
                                     </button>
@@ -637,11 +656,25 @@ function App() {
                             </label>
                             <label>
                                 本机存档路径
-                                <input value={form.localSavePath} onChange={(event) => setForm({...form, localSavePath: event.target.value})}/>
+                                <div className="path-input-row">
+                                    <input value={form.localSavePath} onChange={(event) => setForm({...form, localSavePath: event.target.value})}/>
+                                    <button className="ghost compact icon-only" type="button" onClick={pickSaveDirectory} disabled={busy} title="选择存档文件夹">
+                                        <FolderOpen size={16}/>
+                                    </button>
+                                </div>
                             </label>
                             <label>
                                 游戏 exe 路径
-                                <input value={form.gameExePath} onChange={(event) => setForm({...form, gameExePath: event.target.value})} placeholder="D:\\Games\\Game\\game.exe"/>
+                                <div className="path-input-row">
+                                    <input value={form.gameExePath} onChange={(event) => setForm({...form, gameExePath: event.target.value})} placeholder="D:\\Games\\Game\\game.exe"/>
+                                    <button className="ghost compact icon-only" type="button" onClick={pickGameExe} disabled={busy} title="选择游戏程序">
+                                        <FolderOpen size={16}/>
+                                    </button>
+                                </div>
+                            </label>
+                            <label>
+                                启动参数
+                                <input value={form.gameArgs || ''} onChange={(event) => setForm({...form, gameArgs: event.target.value})} placeholder="-windowed -noborder"/>
                             </label>
                             <label>
                                 自动上传

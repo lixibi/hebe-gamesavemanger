@@ -38,7 +38,8 @@ config/syncthing/config.xml
       "name": "博德之门3",
       "folderName": "bg3",
       "localSavePath": "C:\\Users\\you\\AppData\\Local\\Larian Studios\\Baldur's Gate 3\\PlayerProfiles\\Public\\Savegames\\Story",
-      "gameExePath": "D:\\Games\\Baldurs Gate 3\\bin\\bg3_dx11.exe"
+      "gameExePath": "D:\\Games\\Baldurs Gate 3\\bin\\bg3_dx11.exe",
+      "gameArgs": "-windowed"
     }
   ]
 }
@@ -71,6 +72,7 @@ data/<folderName>
 - 左侧游戏列表支持右键菜单。
 - 右键可编辑配置、导出游戏配置、打开本地存档目录、打开云端文件夹、打开游戏目录、备份当前存档、还原备份、刷新、启动游戏、删除配置。
 - 新增游戏窗口支持导入导出的 JSON 配置，方便迁移到另一台电脑后再确认本地路径并保存。
+- 配置窗口支持用系统选择器选择本机存档文件夹和游戏程序文件，并可填写启动参数。
 - 手动备份会备份当前本地游戏存档目录。
 - 还原备份只还原到本地游戏存档目录，不会直接写云端；需要同步到云端时，再点击“上传本地”。
 - 通过本程序启动游戏后会追踪游戏进程。游戏关闭时如果检测到本地存档较新，可配置为询问上传或自动上传。
@@ -80,9 +82,9 @@ data/<folderName>
 ## Windows 兼容
 
 - Windows 路径会原样保存到 `config/games.json`，例如 `C:\Users\you\AppData\Local\...`。
-- Windows 下启动游戏使用系统 `cmd /C start` 打开配置的游戏 exe 路径，更适合带空格的 exe 路径和常见安装目录。
+- Windows 下直接启动配置的游戏程序并传入启动参数，后台命令不会弹出额外 cmd 窗口。
 - 启动程序时会检查 `127.0.0.1:8384`，默认 Syncthing 端口已可连接就不会重复启动 Syncthing。
-- 默认寻找 `hebe-game-save-sync.exe` 同目录下的 `syncthing.exe`，也支持 `syncthing/syncthing.exe`。
+- 默认寻找 `hebe-game-save-sync.exe` 同目录下的 `syncthing.exe`，也支持 `syncthing/syncthing.exe`；开发运行时也会兼容当前工作目录。
 - 程序启用单实例锁，重复打开会唤起已有窗口，不再多开。
 
 ## 开发

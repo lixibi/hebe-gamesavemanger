@@ -824,6 +824,7 @@ func (a *App) startSyncthing() {
 
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = a.rootDir
+	hideCommandWindow(cmd)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
@@ -855,23 +856,27 @@ func (a *App) findSyncthingBinary() string {
 	if runtime.GOOS == "windows" {
 		names = []string{"syncthing.exe", filepath.Join("syncthing", "syncthing.exe")}
 	}
-	for _, name := range names {
-		path := filepath.Join(a.rootDir, name)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
+	for _, dir := range candidateRootDirs(a.rootDir) {
+		for _, name := range names {
+			path := filepath.Join(dir, name)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				return path
+			}
 		}
 	}
 	return ""
 }
 
 func (a *App) findSyncthingHome() string {
-	for _, dir := range []string{
-		filepath.Join(a.rootDir, "syncthing-home"),
-		filepath.Join(a.rootDir, "syncthing", "config"),
-		filepath.Join(a.rootDir, "config", "syncthing"),
-	} {
-		if _, err := os.Stat(filepath.Join(dir, "config.xml")); err == nil {
-			return dir
+	for _, root := range candidateRootDirs(a.rootDir) {
+		for _, dir := range []string{
+			filepath.Join(root, "syncthing-home"),
+			filepath.Join(root, "syncthing", "config"),
+			filepath.Join(root, "config", "syncthing"),
+		} {
+			if _, err := os.Stat(filepath.Join(dir, "config.xml")); err == nil {
+				return dir
+			}
 		}
 	}
 	return ""
@@ -1215,14 +1220,19 @@ func launchCommand(exePath string) *exec.Cmd {
 }
 
 func launchCommandWithArgs(exePath string, args string) *exec.Cmd {
-	if strings.TrimSpace(args) == "" {
-		cmd := exec.Command(exePath)
+	parsedArgs := parseArgs(args)
+	if runtime.GOOS == "windows" && strings.ToLower(filepath.Ext(exePath)) != ".exe" {
+		startArgs := []string{"/C", "start", "", exePath}
+		startArgs = append(startArgs, parsedArgs...)
+		cmd := exec.Command("cmd", startArgs...)
 		cmd.Dir = filepath.Dir(exePath)
+		hideCommandWindow(cmd)
 		return cmd
 	}
-	parts := append([]string{exePath}, parseArgs(args)...)
-	cmd := exec.Command(parts[0], parts[1:]...)
+
+	cmd := exec.Command(exePath, parsedArgs...)
 	cmd.Dir = filepath.Dir(exePath)
+	hideCommandWindow(cmd)
 	return cmd
 }
 
@@ -1268,7 +1278,36 @@ func openPath(path string) error {
 	default:
 		cmd = exec.Command("xdg-open", path)
 	}
+	hideCommandWindow(cmd)
 	return cmd.Start()
+}
+
+func candidateRootDirs(root string) []string {
+	seen := map[string]struct{}{}
+	var dirs []string
+	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			abs = path
+		}
+		if _, ok := seen[abs]; ok {
+			return
+		}
+		seen[abs] = struct{}{}
+		dirs = append(dirs, abs)
+	}
+
+	add(root)
+	if exe, err := os.Executable(); err == nil {
+		add(filepath.Dir(exe))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		add(cwd)
+	}
+	return dirs
 }
 
 func waitForPort(address string, timeout time.Duration) bool {

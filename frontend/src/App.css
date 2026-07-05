@@ -249,7 +249,8 @@ select:focus {
 
 .primary,
 .ghost,
-.danger {
+.danger,
+.launch-button {
     min-height: 34px;
     display: inline-flex;
     align-items: center;
@@ -266,6 +267,12 @@ select:focus {
     padding: 0 10px;
 }
 
+.icon-only {
+    width: 36px;
+    min-width: 36px;
+    padding: 0;
+}
+
 .primary {
     background: var(--charcoal);
     color: #fff;
@@ -273,6 +280,27 @@ select:focus {
 
 .primary:hover {
     background: #111317;
+}
+
+.launch-button {
+    border: 1px solid #16764f;
+    background: linear-gradient(180deg, #27a36f 0%, #1f8a5f 100%);
+    color: #fff;
+    font-weight: 800;
+    box-shadow: 0 8px 18px rgba(31, 138, 95, 0.22);
+}
+
+.launch-button:hover {
+    background: linear-gradient(180deg, #2bb67b 0%, #1f9364 100%);
+    transform: translateY(-1px);
+}
+
+.launch-button:disabled {
+    border-color: var(--line);
+    background: #d9d7d1;
+    color: #7a7d83;
+    box-shadow: none;
+    transform: none;
 }
 
 .ghost {
@@ -745,6 +773,12 @@ button:disabled {
 .form-grid {
     display: grid;
     gap: 12px;
+}
+
+.path-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    gap: 8px;
 }
 
 @media (max-width: 700px) {

@@ -34,6 +34,14 @@ export function OpenGamePath(arg1, arg2) {
   return window['go']['main']['App']['OpenGamePath'](arg1, arg2);
 }
 
+export function PickGameExe() {
+  return window['go']['main']['App']['PickGameExe']();
+}
+
+export function PickSaveDirectory() {
+  return window['go']['main']['App']['PickSaveDirectory']();
+}
+
 export function RestoreBackup(arg1, arg2) {
   return window['go']['main']['App']['RestoreBackup'](arg1, arg2);
 }

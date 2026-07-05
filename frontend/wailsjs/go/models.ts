@@ -102,6 +102,7 @@ export namespace main {
 	    cloudPassword: string;
 	    cloudStatus: string;
 	    cloudMessage: string;
+	    cloudGameCount: number;
 	    games: GameStatus[];
 	
 	    static createFrom(source: any = {}) {
@@ -117,6 +118,7 @@ export namespace main {
 	        this.cloudPassword = source["cloudPassword"];
 	        this.cloudStatus = source["cloudStatus"];
 	        this.cloudMessage = source["cloudMessage"];
+	        this.cloudGameCount = source["cloudGameCount"];
 	        this.games = this.convertValues(source["games"], GameStatus);
 	    }
 	

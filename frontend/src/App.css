@@ -390,9 +390,16 @@ button:disabled {
 
 .cloud-service {
     display: grid;
-    gap: 8px;
+    gap: 9px;
     padding-top: 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.cloud-service-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
 }
 
 .cloud-service p {
@@ -401,31 +408,29 @@ button:disabled {
     overflow-wrap: anywhere;
 }
 
-.cloud-url-row {
+.cloud-facts {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 36px 36px;
-    gap: 6px;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 5px 8px;
+    padding: 8px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.06);
 }
 
-.cloud-password-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 36px;
-    gap: 6px;
-}
-
-.cloud-url-row input,
-.cloud-password-row input,
-.cloud-password-input {
-    min-height: 32px;
-    border-color: rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.09);
-    color: #fff;
-}
-
-.cloud-url-row input::placeholder,
-.cloud-password-row input::placeholder,
-.cloud-password-input::placeholder {
+.cloud-facts span {
     color: #b9bbbf;
+    font-size: 12px;
+}
+
+.cloud-facts strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
 }
 
 .status-pill {
@@ -736,6 +741,10 @@ button:disabled {
 
 .backup-modal {
     width: min(560px, 100%);
+}
+
+.cloud-config-modal {
+    width: min(620px, 100%);
 }
 
 .backup-list {

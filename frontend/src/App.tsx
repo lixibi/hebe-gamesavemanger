@@ -10,10 +10,10 @@ import {
     History,
     Pencil,
     Gamepad2,
+    Settings,
     Play,
     Plus,
     RefreshCw,
-    RotateCcw,
     RotateCcw as RestoreIcon,
     Save,
     Trash2,
@@ -33,7 +33,6 @@ import {
     RestoreBackup,
     SaveCloudServerURL,
     SaveGame,
-    RefreshCloudServer,
     SyncGame,
     TestCloudServerURL,
     ChangeCloudPassword
@@ -98,6 +97,7 @@ function App() {
     const [configOpen, setConfigOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [backupOpen, setBackupOpen] = useState(false);
+    const [cloudConfigOpen, setCloudConfigOpen] = useState(false);
     const [backups, setBackups] = useState<main.BackupInfo[]>([]);
     const [cloudUrl, setCloudUrl] = useState('');
     const [cloudPassword, setCloudPassword] = useState('hebesave');
@@ -107,6 +107,13 @@ function App() {
     const selectedStatus = useMemo(() => {
         return appState?.games?.find((item) => item.game.id === selectedId) ?? null;
     }, [appState, selectedId]);
+
+    const cloudSummary = useMemo(() => {
+        const items = appState?.games ?? [];
+        const synced = items.filter((item) => item.state === 'in-sync').length;
+        const attention = items.length - synced;
+        return {synced, attention};
+    }, [appState?.games]);
 
     useEffect(() => {
         void refresh();
@@ -311,14 +318,6 @@ function App() {
         });
     }
 
-    async function refreshCloudService() {
-        await run(RefreshCloudServer, (state) => {
-            setAppState(state);
-            setNotice('已刷新云服务连接状态');
-            appendLog('已刷新云服务连接状态');
-        });
-    }
-
     async function testCloudService() {
         await run(() => TestCloudServerURL(cloudUrl, cloudPassword), (message) => {
             setNotice(message || '云服务连接正常');
@@ -329,6 +328,7 @@ function App() {
     async function saveCloudService() {
         await run(() => SaveCloudServerURL(cloudUrl, cloudPassword), (state) => {
             setAppState(state);
+            setCloudConfigOpen(false);
             setNotice('云地址已保存，并已同步云端游戏列表');
             appendLog('已保存云服务地址');
         });
@@ -491,30 +491,23 @@ function App() {
                 </div>
 
                 <div className="cloud-service">
-                    <span className={`status-pill ${appState?.cloudStatus ?? 'stopped'}`}>
-                        {appState?.cloudStatus === 'running' ? '云服务已连接' : '云服务未连接'}
-                    </span>
-                    <div className="cloud-url-row">
-                        <input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="http://NAS-IP:27843"/>
-                        <button className="ghost compact icon-only" onClick={testCloudService} disabled={busy} title="测试连接">
-                            <RefreshCw size={15}/>
-                        </button>
-                        <button className="ghost compact icon-only" onClick={saveCloudService} disabled={busy} title="保存云地址">
-                            <Save size={15}/>
+                    <div className="cloud-service-head">
+                        <span className={`status-pill ${appState?.cloudStatus ?? 'stopped'}`}>
+                            {appState?.cloudStatus === 'running' ? '云端已连接' : '云端未连接'}
+                        </span>
+                        <button className="ghost compact icon-only" onClick={() => setCloudConfigOpen(true)} disabled={busy} title="云端配置">
+                            <Settings size={15}/>
                         </button>
                     </div>
-                    <input className="cloud-password-input" type="password" value={cloudPassword} onChange={(event) => setCloudPassword(event.target.value)} placeholder="连接密码"/>
-                    <div className="cloud-password-row">
-                        <input type="password" value={newCloudPassword} onChange={(event) => setNewCloudPassword(event.target.value)} placeholder="新服务端密码"/>
-                        <button className="ghost compact icon-only" onClick={changeCloudPassword} disabled={busy || !newCloudPassword} title="修改服务端密码">
-                            <KeyRound size={15}/>
-                        </button>
+                    <div className="cloud-facts">
+                        <span>地址</span>
+                        <strong>{appState?.cloudServerURL ?? '未设置'}</strong>
+                        <span>云端游戏</span>
+                        <strong>{appState?.cloudGameCount ?? 0} 个</strong>
+                        <span>同步情况</span>
+                        <strong>{cloudSummary.synced} 已同步 / {cloudSummary.attention} 需处理</strong>
                     </div>
                     <p>{appState?.cloudMessage ?? '正在读取状态'}</p>
-                    <button className="ghost full" onClick={refreshCloudService} disabled={busy} title="刷新云服务">
-                        <RotateCcw size={16}/>
-                        刷新云服务
-                    </button>
                 </div>
             </aside>
 
@@ -683,6 +676,48 @@ function App() {
                                     {item.label}
                                 </button>
                             ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {cloudConfigOpen && (
+                <div className="modal-backdrop">
+                    <div className="modal cloud-config-modal">
+                        <div className="modal-head">
+                            <div>
+                                <h3>云端配置</h3>
+                                <p>设置云服务地址、连接密码，并可修改服务端密码。</p>
+                            </div>
+                        </div>
+                        <div className="form-grid">
+                            <label>
+                                云地址
+                                <input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="NAS-IP:27843 或 https://save.example.com"/>
+                            </label>
+                            <label>
+                                连接密码
+                                <input type="password" value={cloudPassword} onChange={(event) => setCloudPassword(event.target.value)} placeholder="hebesave"/>
+                            </label>
+                            <label>
+                                新服务端密码
+                                <input type="password" value={newCloudPassword} onChange={(event) => setNewCloudPassword(event.target.value)} placeholder="连接成功后可修改"/>
+                            </label>
+                        </div>
+                        <div className="modal-actions">
+                            <button className="ghost" onClick={() => setCloudConfigOpen(false)} disabled={busy}>关闭</button>
+                            <button className="ghost" onClick={testCloudService} disabled={busy}>
+                                <RefreshCw size={15}/>
+                                测试
+                            </button>
+                            <button className="ghost" onClick={changeCloudPassword} disabled={busy || !newCloudPassword}>
+                                <KeyRound size={15}/>
+                                修改密码
+                            </button>
+                            <button className="primary" onClick={saveCloudService} disabled={busy}>
+                                <Save size={15}/>
+                                保存
+                            </button>
                         </div>
                     </div>
                 </div>

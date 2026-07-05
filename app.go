@@ -66,6 +66,7 @@ type AppState struct {
 	CloudPassword  string       `json:"cloudPassword"`
 	CloudStatus    string       `json:"cloudStatus"`
 	CloudMessage   string       `json:"cloudMessage"`
+	CloudGameCount int          `json:"cloudGameCount"`
 	Games          []GameStatus `json:"games"`
 }
 
@@ -183,6 +184,7 @@ func (a *App) GetAppState() (AppState, error) {
 		CloudPassword:  cfg.CloudPassword,
 		CloudStatus:    syncStatus,
 		CloudMessage:   syncMessage,
+		CloudGameCount: a.cloudGameCount(),
 		Games:          statuses,
 	}, nil
 }
@@ -805,6 +807,14 @@ func (a *App) loadCloudGames() ([]cloudGameConfig, error) {
 		return nil, err
 	}
 	return payload.Games, nil
+}
+
+func (a *App) cloudGameCount() int {
+	games, err := a.loadCloudGames()
+	if err != nil {
+		return 0
+	}
+	return len(games)
 }
 
 func (a *App) saveCloudGame(game GameConfig) error {

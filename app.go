@@ -210,7 +210,7 @@ func (a *App) SaveGame(game GameConfig) (AppState, error) {
 			return AppState{}, fmt.Errorf("检查本地存档失败：%w", err)
 		}
 		if len(manifest) == 0 {
-			return AppState{}, errors.New("本地存档目录文件数为 0，已停止首次上传，请确认存档路径是否正确")
+			shouldInitialUpload = false
 		}
 	}
 

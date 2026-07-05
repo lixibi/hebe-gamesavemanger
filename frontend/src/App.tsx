@@ -223,8 +223,13 @@ function App() {
                 chooseGame(saved);
             }
             setConfigOpen(false);
-            setNotice('配置已保存');
-            appendLog(`已保存 ${payload.name} 配置`);
+            if (saved && payload.localSavePath && saved.localFiles === 0) {
+                setNotice('配置已保存，但本地存档目录当前是空的，请确认是否指向正确。');
+                appendLog(`已保存 ${payload.name} 配置，本地目录为空`);
+            } else {
+                setNotice('配置已保存');
+                appendLog(`已保存 ${payload.name} 配置`);
+            }
         });
     }
 

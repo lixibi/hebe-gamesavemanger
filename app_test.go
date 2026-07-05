@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -164,6 +167,70 @@ func TestSyncGameBacksUpDestinationBeforeOverwrite(t *testing.T) {
 	}
 	if got := readTestFile(t, filepath.Join(result.BackupPath, "slot.dat")); got != "local" {
 		t.Fatalf("expected backup to keep original local save, got %q", got)
+	}
+}
+
+func TestSaveGameAllowsEmptyLocalDirectoryWithoutInitialUpload(t *testing.T) {
+	root := t.TempDir()
+	configRequests := 0
+	uploadRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/health":
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/games":
+			_ = json.NewEncoder(w).Encode(cloudGamesResponse{Games: []cloudGameConfig{{
+				ID:         "empty",
+				Name:       "Empty",
+				FolderName: "empty",
+			}}})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/games/empty/config":
+			configRequests++
+			_ = json.NewEncoder(w).Encode(cloudGameConfig{ID: "empty", Name: "Empty", FolderName: "empty"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/games/empty/manifest":
+			_ = json.NewEncoder(w).Encode(cloudManifestResponse{
+				Files: map[string]struct {
+					Hash    string `json:"hash"`
+					Size    int64  `json:"size"`
+					ModTime string `json:"modTime"`
+				}{},
+				Dirs: []string{},
+			})
+		case (r.Method == http.MethodPut || r.Method == http.MethodPost) && r.URL.Path == "/api/games/empty/archive":
+			uploadRequests++
+			http.Error(w, "empty upload should not be called", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	app := newTestApp(t, root)
+	if err := app.saveConfig(Config{CloudServerURL: server.URL, CloudPassword: "hebesave", Games: []GameConfig{}}); err != nil {
+		t.Fatal(err)
+	}
+	game := GameConfig{
+		ID:            "empty",
+		Name:          "Empty",
+		FolderName:    "empty",
+		LocalSavePath: filepath.Join(root, "local", "empty"),
+	}
+	if err := os.MkdirAll(game.LocalSavePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := app.SaveGame(game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configRequests != 1 {
+		t.Fatalf("expected cloud config to be saved once, got %d", configRequests)
+	}
+	if uploadRequests != 0 {
+		t.Fatalf("expected empty local directory to skip initial upload, got %d uploads", uploadRequests)
+	}
+	if len(state.Games) != 1 || state.Games[0].LocalFiles != 0 {
+		t.Fatalf("expected saved empty game state, got %+v", state.Games)
 	}
 }
 

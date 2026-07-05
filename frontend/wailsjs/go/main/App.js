@@ -6,6 +6,10 @@ export function ChangeCloudPassword(arg1) {
   return window['go']['main']['App']['ChangeCloudPassword'](arg1);
 }
 
+export function CompareGame(arg1) {
+  return window['go']['main']['App']['CompareGame'](arg1);
+}
+
 export function CreateManualBackup(arg1) {
   return window['go']['main']['App']['CreateManualBackup'](arg1);
 }

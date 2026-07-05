@@ -19,10 +19,10 @@ func main() {
 	// Create application with options
 	err := wails.Run(&options.App{
 		Title:     "hebe游戏存档同步",
-		Width:     900,
-		Height:    600,
+		Width:     980,
+		Height:    720,
 		MinWidth:  760,
-		MinHeight: 520,
+		MinHeight: 640,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "com.hebe.gamesavesync",
 			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import './App.css';
 import {
+    CompareGame,
     CreateManualBackup,
     DeleteGame,
     ExportGameConfig,
@@ -102,7 +103,9 @@ function App() {
     const [cloudUrl, setCloudUrl] = useState('');
     const [cloudPassword, setCloudPassword] = useState('hebesave');
     const [newCloudPassword, setNewCloudPassword] = useState('');
+    const [passwordChangeOpen, setPasswordChangeOpen] = useState(false);
     const [activityLog, setActivityLog] = useState<string[]>(['等待操作']);
+    const [compareResult, setCompareResult] = useState<main.CompareResult | null>(null);
 
     const selectedStatus = useMemo(() => {
         return appState?.games?.find((item) => item.game.id === selectedId) ?? null;
@@ -122,9 +125,7 @@ function App() {
     }, [selectedId, configOpen]);
 
     useEffect(() => {
-        if (appState?.cloudServerURL) {
-            setCloudUrl(appState.cloudServerURL);
-        }
+        setCloudUrl(appState?.cloudServerURL ?? '');
         if (appState?.cloudPassword) {
             setCloudPassword(appState.cloudPassword);
         }
@@ -187,6 +188,7 @@ function App() {
     function chooseGame(status: main.GameStatus) {
         setSelectedId(status.game.id);
         setForm({...status.game});
+        setCompareResult(null);
         setNotice('');
         setError('');
     }
@@ -237,6 +239,7 @@ function App() {
         if (!selectedStatus) {
             return;
         }
+        warnIfCloudUnavailable();
         const title = direction === 'cloud-to-local' ? '云端覆盖本地' : '本地覆盖云端';
         const body = overwriteBody(selectedStatus, direction);
 
@@ -331,23 +334,59 @@ function App() {
         });
     }
 
-    async function saveCloudService() {
-        await run(() => SaveCloudServerURL(cloudUrl, cloudPassword), (state) => {
+    async function saveCloudService(mode?: 'offline') {
+        const nextUrl = mode === 'offline' ? 'offline' : cloudUrl;
+        await run(() => SaveCloudServerURL(nextUrl, cloudPassword), (state) => {
             setAppState(state);
+            setCloudUrl(state.cloudServerURL || '');
             setCloudConfigOpen(false);
-            setNotice('云地址已保存，并已同步云端游戏列表');
-            appendLog('已保存云服务地址');
+            setNotice(mode === 'offline' ? '已切换为离线使用，只能本地备份。' : '云地址已保存');
+            appendLog(mode === 'offline' ? '已切换离线使用' : '已保存云服务地址');
         });
     }
 
     async function changeCloudPassword() {
-        await run(() => ChangeCloudPassword(newCloudPassword), (state) => {
-            setAppState(state);
-            setCloudPassword(newCloudPassword);
-            setNewCloudPassword('');
-            setNotice('服务端密码已修改');
-            appendLog('已修改服务端密码');
+        if (!newCloudPassword) {
+            return;
+        }
+        setConfirm({
+            title: '修改服务端密码',
+            body: '确认修改服务端连接密码？修改后其他客户端需要使用新密码重新连接。',
+            actions: [{
+                label: '确认修改',
+                className: 'danger',
+                action: async () => {
+                    await run(() => ChangeCloudPassword(newCloudPassword), (state) => {
+                        setAppState(state);
+                        setCloudPassword(newCloudPassword);
+                        setNewCloudPassword('');
+                        setPasswordChangeOpen(false);
+                        setNotice('服务端密码已修改');
+                        appendLog('已修改服务端密码');
+                    });
+                },
+            }],
         });
+    }
+
+    async function compareSelectedGame() {
+        if (!selectedStatus) {
+            return;
+        }
+        warnIfCloudUnavailable();
+        await run(() => CompareGame(selectedStatus.game.id), (result) => {
+            setCompareResult(result);
+            const total = result.status.localOnly + result.status.cloudOnly + result.status.changed;
+            setNotice(total === 0 ? '本地和云端一致' : '对比完成');
+            appendLog(`已对比 ${selectedStatus.game.name}`);
+        });
+    }
+
+    function warnIfCloudUnavailable() {
+        if (!appState || appState.cloudStatus === 'running') {
+            return;
+        }
+        setNotice(appState.cloudStatus === 'offline' ? '当前是离线使用模式，云端同步不可用。' : '云端可能离线或未设置，上传、下载、对比可能不可用。');
     }
 
     async function confirmAction(action: () => Promise<void>) {
@@ -469,7 +508,6 @@ function App() {
                     <Gamepad2 size={26}/>
                     <div>
                         <h1>hebe游戏存档同步</h1>
-                        <span>自建云存档服务</span>
                     </div>
                 </div>
 
@@ -506,9 +544,8 @@ function App() {
                 <div className="cloud-service">
                     <div className="cloud-service-head">
                         <span className={`status-pill ${appState?.cloudStatus ?? 'stopped'}`}>
-                            {appState?.cloudStatus === 'running' ? '云端已连接' : '云端未连接'}
+                            {cloudStatusLabel(appState?.cloudStatus)}
                         </span>
-                        <span className="cloud-count">{appState?.cloudGameCount ?? 0} 个游戏</span>
                         <button className="ghost compact icon-only" onClick={() => setCloudConfigOpen(true)} disabled={busy} title="云端配置">
                             <Settings size={15}/>
                         </button>
@@ -581,6 +618,10 @@ function App() {
                                 </div>
 
                                 <div className="actions">
+                                    <button className="ghost" onClick={compareSelectedGame} disabled={busy} title="快速对比本地和云端差异">
+                                        <RefreshCw size={17}/>
+                                        快速对比
+                                    </button>
                                     <button className={`direction-action download ${directionTone(selectedStatus, 'cloud-to-local')}`} onClick={() => requestSync('cloud-to-local')} disabled={busy} title="下载云端到本地">
                                         <CloudDownload size={17}/>
                                         下载云端
@@ -602,6 +643,18 @@ function App() {
                                         查看备份
                                     </button>
                                 </div>
+
+                                {compareResult && (
+                                    <section className="compare-panel">
+                                        <div className="compare-head">
+                                            <strong>对比结果</strong>
+                                            <span>{formatDateTime(compareResult.checkedAt)}{compareResult.truncated ? ' · 已截断显示' : ''}</span>
+                                        </div>
+                                        <CompareGroup title="本地新增" items={compareResult.localOnly}/>
+                                        <CompareGroup title="云端新增" items={compareResult.cloudOnly}/>
+                                        <CompareGroup title="内容不同" items={compareResult.changed}/>
+                                    </section>
+                                )}
 
                                 <section className="log-panel">
                                     <span>最新日志</span>
@@ -700,27 +753,37 @@ function App() {
                             <label>
                                 云地址
                                 <input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="NAS-IP:27843 或 https://save.example.com"/>
+                                <small>例：192.168.10.48:27843，或反代地址 https://save.example.com；留空表示未设置。</small>
                             </label>
                             <label>
                                 连接密码
-                                <input type="password" value={cloudPassword} onChange={(event) => setCloudPassword(event.target.value)} placeholder="hebesave"/>
+                                <input type="password" value={cloudPassword} onChange={(event) => setCloudPassword(event.target.value)} placeholder="默认密码 hebesave"/>
+                                <small>默认密码：hebesave</small>
                             </label>
-                            <label>
-                                新服务端密码
-                                <input type="password" value={newCloudPassword} onChange={(event) => setNewCloudPassword(event.target.value)} placeholder="连接成功后可修改"/>
-                            </label>
+                            <div className="inline-actions">
+                                <button className="ghost" onClick={testCloudService} disabled={busy} type="button">
+                                    <RefreshCw size={15}/>
+                                    测试连接
+                                </button>
+                            </div>
+                            {passwordChangeOpen && (
+                                <label>
+                                    新服务端密码
+                                    <input type="password" value={newCloudPassword} onChange={(event) => setNewCloudPassword(event.target.value)} placeholder="例：my-new-save-password"/>
+                                    <small>会修改服务端配置里的密码，提交前会再次确认。</small>
+                                </label>
+                            )}
                         </div>
                         <div className="modal-actions">
                             <button className="ghost" onClick={() => setCloudConfigOpen(false)} disabled={busy}>关闭</button>
-                            <button className="ghost" onClick={testCloudService} disabled={busy}>
-                                <RefreshCw size={15}/>
-                                测试
+                            <button className="ghost" onClick={() => saveCloudService('offline')} disabled={busy}>
+                                离线使用
                             </button>
-                            <button className="ghost" onClick={changeCloudPassword} disabled={busy || !newCloudPassword}>
+                            <button className="ghost" onClick={() => passwordChangeOpen ? changeCloudPassword() : setPasswordChangeOpen(true)} disabled={busy || (passwordChangeOpen && !newCloudPassword)}>
                                 <KeyRound size={15}/>
                                 修改密码
                             </button>
-                            <button className="primary" onClick={saveCloudService} disabled={busy}>
+                            <button className="primary" onClick={() => saveCloudService()} disabled={busy}>
                                 <Save size={15}/>
                                 保存
                             </button>
@@ -816,6 +879,45 @@ function formatDateTime(value: string) {
         return '无';
     }
     return new Date(value).toLocaleString();
+}
+
+function CompareGroup({title, items}: { title: string; items: main.CompareEntry[] }) {
+    return (
+        <div className="compare-group">
+            <span>{title} · {items.length}</span>
+            {items.length === 0 ? (
+                <p>无</p>
+            ) : items.map((item) => (
+                <p key={`${title}-${item.path}`}>
+                    <strong>{item.path}</strong>
+                    <em>{compareSideLabel(item.newerSide)}</em>
+                </p>
+            ))}
+        </div>
+    );
+}
+
+function compareSideLabel(side: string) {
+    if (side === 'local') {
+        return '本地较新';
+    }
+    if (side === 'cloud') {
+        return '云端较新';
+    }
+    return '时间接近';
+}
+
+function cloudStatusLabel(status?: string) {
+    if (status === 'running') {
+        return '云端已连接';
+    }
+    if (status === 'offline') {
+        return '离线使用';
+    }
+    if (status === 'unset') {
+        return '云端未设置';
+    }
+    return '云端离线';
 }
 
 function directionTone(status: main.GameStatus, direction: 'cloud-to-local' | 'local-to-cloud') {

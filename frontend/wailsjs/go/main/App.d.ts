@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function ChangeCloudPassword(arg1:string):Promise<main.AppState>;
 
+export function CompareGame(arg1:string):Promise<main.CompareResult>;
+
 export function CreateManualBackup(arg1:string):Promise<main.BackupInfo>;
 
 export function DeleteGame(arg1:string):Promise<main.AppState>;

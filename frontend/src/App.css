@@ -230,6 +230,12 @@ label {
     font-size: 13px;
 }
 
+label small {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
 input,
 select {
     width: 100%;
@@ -346,6 +352,18 @@ select:focus {
     font-weight: 700;
     white-space: nowrap;
     transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.direction-action.download {
+    border-color: rgba(47, 111, 237, 0.26);
+    background: var(--blue-soft);
+    color: #174aa6;
+}
+
+.direction-action.upload {
+    border-color: rgba(8, 125, 131, 0.28);
+    background: var(--teal-soft);
+    color: #075f64;
 }
 
 .direction-action:hover {
@@ -470,6 +488,21 @@ button:disabled {
 .status-pill.running {
     background: rgba(31, 138, 95, 0.28);
     color: #c8f3da;
+}
+
+.status-pill.offline {
+    background: rgba(255, 255, 255, 0.12);
+    color: #d9dadd;
+}
+
+.status-pill.unset {
+    background: rgba(181, 107, 20, 0.28);
+    color: #ffe0ad;
+}
+
+.status-pill.stopped {
+    background: rgba(188, 59, 59, 0.28);
+    color: #ffd1ce;
 }
 
 .banner {
@@ -643,6 +676,59 @@ button:disabled {
     font-size: 12px;
 }
 
+.compare-panel {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #fff;
+}
+
+.compare-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.compare-head span,
+.compare-group > span {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.compare-group {
+    display: grid;
+    gap: 4px;
+}
+
+.compare-group p {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0;
+    color: #343840;
+    font-size: 12px;
+}
+
+.compare-group strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.compare-group em {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-style: normal;
+}
+
 .details-block {
     margin-top: 10px;
 }
@@ -735,6 +821,11 @@ button:disabled {
     display: flex;
     justify-content: flex-end;
     gap: 10px;
+}
+
+.inline-actions {
+    display: flex;
+    justify-content: flex-start;
 }
 
 .context-menu {

@@ -27,9 +27,8 @@ import (
 )
 
 const (
-	maxBackupsPerGame     = 5
-	defaultCloudServerURL = "http://127.0.0.1:27843"
-	defaultCloudPassword  = "hebesave"
+	maxBackupsPerGame    = 5
+	defaultCloudPassword = "hebesave"
 )
 
 type App struct {
@@ -110,6 +109,24 @@ type BackupInfo struct {
 	Bytes          int64  `json:"bytes"`
 	LatestModified string `json:"latestModified"`
 	LatestPath     string `json:"latestPath"`
+}
+
+type CompareResult struct {
+	Status    GameStatus     `json:"status"`
+	LocalOnly []CompareEntry `json:"localOnly"`
+	CloudOnly []CompareEntry `json:"cloudOnly"`
+	Changed   []CompareEntry `json:"changed"`
+	Truncated bool           `json:"truncated"`
+	CheckedAt string         `json:"checkedAt"`
+}
+
+type CompareEntry struct {
+	Path          string `json:"path"`
+	LocalSize     int64  `json:"localSize"`
+	CloudSize     int64  `json:"cloudSize"`
+	LocalModified string `json:"localModified"`
+	CloudModified string `json:"cloudModified"`
+	NewerSide     string `json:"newerSide"`
 }
 
 type fileInfo struct {
@@ -220,7 +237,8 @@ func (a *App) SaveGame(game GameConfig) (AppState, error) {
 	if err := a.saveCloudGame(game); err != nil {
 		return AppState{}, fmt.Errorf("保存云端游戏配置失败：%w", err)
 	}
-	shouldInitialUpload := a.cloudBaseURL() != "local" && strings.TrimSpace(game.LocalSavePath) != ""
+	baseURL := a.cloudBaseURL()
+	shouldInitialUpload := baseURL != "" && baseURL != "offline" && baseURL != "local" && strings.TrimSpace(game.LocalSavePath) != ""
 	if shouldInitialUpload {
 		manifest, err := scanDirectory(game.LocalSavePath)
 		if err != nil {
@@ -288,6 +306,9 @@ func (a *App) SyncGame(id string, direction string) (SyncResult, error) {
 	if err != nil {
 		return SyncResult{}, err
 	}
+	if err := a.requireCloudForSync(); err != nil {
+		return SyncResult{}, err
+	}
 
 	if a.cloudBaseURL() == "local" {
 		var src, dst string
@@ -329,6 +350,25 @@ func (a *App) SyncGame(id string, direction string) (SyncResult, error) {
 	default:
 		return SyncResult{}, fmt.Errorf("unknown sync direction: %s", direction)
 	}
+}
+
+func (a *App) CompareGame(id string) (CompareResult, error) {
+	game, err := a.findGame(id)
+	if err != nil {
+		return CompareResult{}, err
+	}
+	if err := a.requireCloudForSync(); err != nil {
+		return CompareResult{}, err
+	}
+	localManifest, err := scanDirectory(game.LocalSavePath)
+	if err != nil {
+		return CompareResult{}, fmt.Errorf("扫描本地存档失败：%w", err)
+	}
+	cloudManifest, err := a.cloudManifest(game)
+	if err != nil {
+		return CompareResult{}, fmt.Errorf("读取云端存档失败：%w", err)
+	}
+	return a.compareGameManifests(game, localManifest, cloudManifest), nil
 }
 
 func (a *App) LaunchGame(id string) error {
@@ -385,6 +425,9 @@ func (a *App) ChangeCloudPassword(newPassword string) (AppState, error) {
 	newPassword = strings.TrimSpace(newPassword)
 	if newPassword == "" {
 		return AppState{}, errors.New("new password is required")
+	}
+	if err := a.requireCloudForSync(); err != nil {
+		return AppState{}, err
 	}
 	req, err := http.NewRequest(http.MethodPut, a.cloudBaseURL()+"/api/password", strings.NewReader(fmt.Sprintf(`{"password":%q}`, newPassword)))
 	if err != nil {
@@ -602,7 +645,7 @@ func (a *App) ensureLayout() error {
 		}
 	}
 	if _, err := os.Stat(a.configPath); errors.Is(err, os.ErrNotExist) {
-		return a.saveConfig(Config{CloudServerURL: defaultCloudServerURL, CloudPassword: defaultCloudPassword, Games: []GameConfig{}})
+		return a.saveConfig(Config{CloudPassword: defaultCloudPassword, Games: []GameConfig{}})
 	}
 	return nil
 }
@@ -617,15 +660,12 @@ func (a *App) loadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if strings.TrimSpace(string(raw)) == "" {
-		return Config{CloudServerURL: defaultCloudServerURL, CloudPassword: defaultCloudPassword, Games: []GameConfig{}}, nil
+		return Config{CloudPassword: defaultCloudPassword, Games: []GameConfig{}}, nil
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, err
-	}
-	if strings.TrimSpace(cfg.CloudServerURL) == "" {
-		cfg.CloudServerURL = defaultCloudServerURL
 	}
 	if strings.TrimSpace(cfg.CloudPassword) == "" {
 		cfg.CloudPassword = defaultCloudPassword
@@ -790,9 +830,21 @@ type cloudGamesResponse struct {
 func (a *App) cloudBaseURL() string {
 	cfg, err := a.loadConfig()
 	if err != nil || strings.TrimSpace(cfg.CloudServerURL) == "" {
-		return defaultCloudServerURL
+		return ""
 	}
 	return normalizeCloudServerURL(cfg.CloudServerURL)
+}
+
+func (a *App) requireCloudForSync() error {
+	baseURL := a.cloudBaseURL()
+	switch baseURL {
+	case "":
+		return errors.New("云端未设置，请先配置云服务或选择离线使用；离线时只能本地备份，不能同步")
+	case "offline":
+		return errors.New("当前是离线使用模式，只能本地备份，不能进行云端同步或对比")
+	default:
+		return nil
+	}
 }
 
 func (a *App) cloudPassword() string {
@@ -804,7 +856,8 @@ func (a *App) cloudPassword() string {
 }
 
 func (a *App) authorizeCloudRequest(req *http.Request) {
-	if a.cloudBaseURL() != "local" {
+	baseURL := a.cloudBaseURL()
+	if baseURL != "local" && baseURL != "offline" && baseURL != "" {
 		req.Header.Set("X-Hebe-Password", a.cloudPassword())
 	}
 }
@@ -815,7 +868,11 @@ func (a *App) cloudGameURL(game GameConfig, suffix string) string {
 }
 
 func (a *App) loadCloudGames() ([]cloudGameConfig, error) {
-	if a.cloudBaseURL() == "local" {
+	baseURL := a.cloudBaseURL()
+	if baseURL == "" || baseURL == "offline" {
+		return []cloudGameConfig{}, nil
+	}
+	if baseURL == "local" {
 		cfg, err := a.loadConfig()
 		if err != nil {
 			return nil, err
@@ -827,7 +884,7 @@ func (a *App) loadCloudGames() ([]cloudGameConfig, error) {
 		}
 		return games, nil
 	}
-	req, err := http.NewRequest(http.MethodGet, a.cloudBaseURL()+"/api/games", nil)
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/games", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -857,7 +914,8 @@ func (a *App) cloudGameCount() int {
 }
 
 func (a *App) saveCloudGame(game GameConfig) error {
-	if a.cloudBaseURL() == "local" {
+	baseURL := a.cloudBaseURL()
+	if baseURL == "" || baseURL == "offline" || baseURL == "local" {
 		return nil
 	}
 	payload := cloudGameConfig{ID: game.ID, Name: game.Name, FolderName: game.FolderName}
@@ -892,7 +950,13 @@ func (a *App) cloudManifest(game GameConfig) (map[string]fileInfo, error) {
 }
 
 func (a *App) cloudSnapshot(game GameConfig) (directorySnapshot, error) {
-	if a.cloudBaseURL() == "local" {
+	baseURL := a.cloudBaseURL()
+	switch baseURL {
+	case "":
+		return directorySnapshot{}, errors.New("云端未设置")
+	case "offline":
+		return directorySnapshot{}, errors.New("离线使用模式未连接云端")
+	case "local":
 		return scanDirectorySnapshot(a.cloudSavePath(game))
 	}
 	req, err := http.NewRequest(http.MethodGet, a.cloudGameURL(game, "/manifest"), nil)
@@ -1021,9 +1085,13 @@ func (a *App) cloudServerStatus(baseURL string) (string, string) {
 
 func (a *App) cloudServerStatusWithPassword(baseURL string, password string) (string, string) {
 	if strings.TrimSpace(baseURL) == "" {
-		baseURL = defaultCloudServerURL
+		return "unset", "云端未设置：可以本地备份，但不能上传、下载或对比云端"
 	}
+	baseURL = normalizeCloudServerURL(baseURL)
 	password = normalizeCloudPassword(password)
+	if baseURL == "offline" {
+		return "offline", "离线使用：只启用本地备份，不连接云端"
+	}
 	if baseURL == "local" {
 		return "running", "本地 data 兼容模式，仅用于测试或离线调试"
 	}
@@ -1661,6 +1729,84 @@ func compareManifests(local map[string]fileInfo, cloud map[string]fileInfo) diff
 	return result
 }
 
+func (a *App) compareGameManifests(game GameConfig, local map[string]fileInfo, cloud map[string]fileInfo) CompareResult {
+	const maxEntriesPerGroup = 30
+
+	localOnlyPaths := []string{}
+	cloudOnlyPaths := []string{}
+	changedPaths := []string{}
+	for path, localFile := range local {
+		cloudFile, ok := cloud[path]
+		if !ok {
+			localOnlyPaths = append(localOnlyPaths, path)
+			continue
+		}
+		if localFile.Hash != cloudFile.Hash {
+			changedPaths = append(changedPaths, path)
+		}
+	}
+	for path := range cloud {
+		if _, ok := local[path]; !ok {
+			cloudOnlyPaths = append(cloudOnlyPaths, path)
+		}
+	}
+	sort.Strings(localOnlyPaths)
+	sort.Strings(cloudOnlyPaths)
+	sort.Strings(changedPaths)
+
+	status := a.statusForGame(game)
+	result := CompareResult{
+		Status:    status,
+		CheckedAt: time.Now().Format(time.RFC3339),
+	}
+	result.LocalOnly, result.Truncated = compareEntries(localOnlyPaths, local, cloud, maxEntriesPerGroup, result.Truncated)
+	result.CloudOnly, result.Truncated = compareEntries(cloudOnlyPaths, local, cloud, maxEntriesPerGroup, result.Truncated)
+	result.Changed, result.Truncated = compareEntries(changedPaths, local, cloud, maxEntriesPerGroup, result.Truncated)
+	return result
+}
+
+func compareEntries(paths []string, local map[string]fileInfo, cloud map[string]fileInfo, limit int, truncated bool) ([]CompareEntry, bool) {
+	if len(paths) > limit {
+		truncated = true
+		paths = paths[:limit]
+	}
+	entries := make([]CompareEntry, 0, len(paths))
+	for _, path := range paths {
+		localFile, hasLocal := local[path]
+		cloudFile, hasCloud := cloud[path]
+		entry := CompareEntry{Path: path}
+		if hasLocal {
+			entry.LocalSize = localFile.Size
+			entry.LocalModified = localFile.ModTime.Format(time.RFC3339)
+		}
+		if hasCloud {
+			entry.CloudSize = cloudFile.Size
+			entry.CloudModified = cloudFile.ModTime.Format(time.RFC3339)
+		}
+		entry.NewerSide = compareEntryNewerSide(localFile, hasLocal, cloudFile, hasCloud)
+		entries = append(entries, entry)
+	}
+	return entries, truncated
+}
+
+func compareEntryNewerSide(localFile fileInfo, hasLocal bool, cloudFile fileInfo, hasCloud bool) string {
+	const modTimeTolerance = 2 * time.Second
+	switch {
+	case hasLocal && !hasCloud:
+		return "local"
+	case hasCloud && !hasLocal:
+		return "cloud"
+	case !hasLocal && !hasCloud:
+		return ""
+	case localFile.ModTime.After(cloudFile.ModTime.Add(modTimeTolerance)):
+		return "local"
+	case cloudFile.ModTime.After(localFile.ModTime.Add(modTimeTolerance)):
+		return "cloud"
+	default:
+		return "unknown"
+	}
+}
+
 func describeDiff(status GameStatus) (string, string) {
 	if status.LocalOnly == 0 && status.CloudOnly == 0 && status.Changed == 0 {
 		return "in-sync", "本地和云端存档完全一致"
@@ -2057,9 +2203,9 @@ func firstNonEmpty(values ...string) string {
 func normalizeCloudServerURL(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return defaultCloudServerURL
+		return ""
 	}
-	if value == "local" {
+	if value == "local" || value == "offline" {
 		return value
 	}
 	if !strings.Contains(value, "://") {

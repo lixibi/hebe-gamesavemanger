@@ -1,5 +1,5 @@
 export namespace main {
-	
+
 	export class GameConfig {
 	    id: string;
 	    name: string;
@@ -10,11 +10,11 @@ export namespace main {
 	    autoUploadMode: string;
 	    autoUploadIntervalMinutes: number;
 	    saveSubdir?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GameConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -49,11 +49,11 @@ export namespace main {
 	    cloudModified: string;
 	    localLatestPath: string;
 	    cloudLatestPath: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GameStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.game = this.convertValues(source["game"], GameConfig);
@@ -77,7 +77,7 @@ export namespace main {
 	        this.localLatestPath = source["localLatestPath"];
 	        this.cloudLatestPath = source["cloudLatestPath"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -106,11 +106,11 @@ export namespace main {
 	    cloudMessage: string;
 	    cloudGameCount: number;
 	    games: GameStatus[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AppState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.rootDir = source["rootDir"];
@@ -123,7 +123,7 @@ export namespace main {
 	        this.cloudGameCount = source["cloudGameCount"];
 	        this.games = this.convertValues(source["games"], GameStatus);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -150,11 +150,11 @@ export namespace main {
 	    bytes: number;
 	    latestModified: string;
 	    latestPath: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new BackupInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -166,22 +166,84 @@ export namespace main {
 	        this.latestPath = source["latestPath"];
 	    }
 	}
-	
-	
+	export class CompareEntry {
+	    path: string;
+	    localSize: number;
+	    cloudSize: number;
+	    localModified: string;
+	    cloudModified: string;
+	    newerSide: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CompareEntry(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.localSize = source["localSize"];
+	        this.cloudSize = source["cloudSize"];
+	        this.localModified = source["localModified"];
+	        this.cloudModified = source["cloudModified"];
+	        this.newerSide = source["newerSide"];
+	    }
+	}
+	export class CompareResult {
+	    status: GameStatus;
+	    localOnly: CompareEntry[];
+	    cloudOnly: CompareEntry[];
+	    changed: CompareEntry[];
+	    truncated: boolean;
+	    checkedAt: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CompareResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = this.convertValues(source["status"], GameStatus);
+	        this.localOnly = this.convertValues(source["localOnly"], CompareEntry);
+	        this.cloudOnly = this.convertValues(source["cloudOnly"], CompareEntry);
+	        this.changed = this.convertValues(source["changed"], CompareEntry);
+	        this.truncated = source["truncated"];
+	        this.checkedAt = source["checkedAt"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+
 	export class SyncResult {
 	    backupPath: string;
 	    status: GameStatus;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SyncResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.backupPath = source["backupPath"];
 	        this.status = this.convertValues(source["status"], GameStatus);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;

@@ -188,7 +188,7 @@ button {
     min-height: 44px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 18px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--line);
@@ -568,6 +568,7 @@ button:disabled {
 }
 
 .latest-summary > div {
+    position: relative;
     min-width: 0;
     padding: 9px 10px;
     border: 1px solid var(--line);
@@ -575,10 +576,34 @@ button:disabled {
     background: #ffffff;
 }
 
+.latest-summary > div.is-fresh {
+    border-color: rgba(8, 125, 131, 0.42);
+    background: linear-gradient(180deg, #f0fbfa 0%, #ffffff 76%);
+    box-shadow: 0 8px 18px rgba(8, 125, 131, 0.09);
+}
+
+.latest-summary > div.has-difference {
+    border-color: rgba(181, 107, 20, 0.36);
+    background: linear-gradient(180deg, #fff8eb 0%, #ffffff 78%);
+}
+
 .latest-summary span {
     display: block;
     color: var(--muted);
     font-size: 12px;
+}
+
+.latest-summary em {
+    position: absolute;
+    top: 8px;
+    right: 9px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: var(--teal-soft);
+    color: var(--teal);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 700;
 }
 
 .latest-summary strong {

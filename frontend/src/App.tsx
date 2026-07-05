@@ -278,6 +278,7 @@ function App() {
                         setAppState(state);
                         setSelectedId('');
                         setForm({...emptyGame});
+                        setConfigOpen(false);
                         setNotice('配置已删除');
                         appendLog(`已删除 ${selectedStatus.game.name} 配置`);
                     });
@@ -520,10 +521,6 @@ function App() {
 
             <section className="workspace">
                 <header className="topbar">
-                    <div>
-                        <p>数据目录</p>
-                        <strong>{appState?.dataDir ?? '...'}</strong>
-                    </div>
                     <button className="ghost" onClick={() => refresh()} disabled={busy} title="刷新状态">
                         <RefreshCw size={17}/>
                         刷新
@@ -568,13 +565,15 @@ function App() {
                                 </div>
 
                                 <div className="latest-summary">
-                                    <div>
+                                    <div className={latestFreshClass(selectedStatus, 'local')}>
                                         <span>本地最新文件</span>
+                                        {latestFreshClass(selectedStatus, 'local') && <em>较新</em>}
                                         <strong>{formatDateTime(selectedStatus.localModified)}</strong>
                                         <p>{selectedStatus.localLatestPath || '无文件'}</p>
                                     </div>
-                                    <div>
+                                    <div className={latestFreshClass(selectedStatus, 'cloud')}>
                                         <span>云端最新文件</span>
+                                        {latestFreshClass(selectedStatus, 'cloud') && <em>较新</em>}
                                         <strong>{formatDateTime(selectedStatus.cloudModified)}</strong>
                                         <p>{selectedStatus.cloudLatestPath || '无文件'}</p>
                                     </div>
@@ -601,10 +600,6 @@ function App() {
                                         <History size={17}/>
                                         查看备份
                                     </button>
-                                    <button className="ghost danger-text" onClick={requestDelete} disabled={busy} title="删除配置">
-                                        <Trash2 size={17}/>
-                                        删除配置
-                                    </button>
                                 </div>
 
                                 <section className="log-panel">
@@ -621,6 +616,8 @@ function App() {
                                         <p>{selectedStatus.game.localSavePath}</p>
                                         <span>云端</span>
                                         <p>{selectedStatus.cloudPath}</p>
+                                        <span>数据目录</span>
+                                        <p>{appState?.dataDir ?? '未读取'}</p>
                                         <span>游戏目录</span>
                                         <p>{selectedStatus.game.gameExePath ? selectedStatus.game.gameExePath : '未设置'}</p>
                                     </div>
@@ -646,7 +643,6 @@ function App() {
                     <hr/>
                     <button onClick={() => refresh()}><RefreshCw size={15}/> 刷新状态</button>
                     <button onClick={launchGame} disabled={!contextMenu.status.game.gameExePath}><Play size={15}/> 启动游戏</button>
-                    <button className="danger-item" onClick={requestDelete}><Trash2 size={15}/> 删除配置</button>
                 </div>
             )}
 
@@ -793,6 +789,12 @@ function App() {
                         </div>
 
                         <div className="modal-actions">
+                            {selectedId && (
+                                <button className="ghost danger-text" type="button" onClick={requestDelete} disabled={busy}>
+                                    <Trash2 size={15}/>
+                                    删除配置
+                                </button>
+                            )}
                             <button className="ghost" type="button" onClick={() => setConfigOpen(false)} disabled={busy}>取消</button>
                             <button className="primary" type="submit" disabled={busy}>保存配置</button>
                         </div>
@@ -830,6 +832,21 @@ function directionTone(status: main.GameStatus, direction: 'cloud-to-local' | 'l
         return direction === 'local-to-cloud' ? 'recommended' : 'secondary';
     }
     return 'caution';
+}
+
+function latestFreshClass(status: main.GameStatus, side: 'local' | 'cloud') {
+    if (status.lastChangeSide === side) {
+        return 'is-fresh';
+    }
+    if (status.lastChangeSide === 'both') {
+        return 'has-difference';
+    }
+    const localTime = Date.parse(status.localModified || '');
+    const cloudTime = Date.parse(status.cloudModified || '');
+    if (Number.isNaN(localTime) || Number.isNaN(cloudTime) || localTime === cloudTime) {
+        return '';
+    }
+    return (side === 'local' ? localTime > cloudTime : cloudTime > localTime) ? 'is-fresh' : '';
 }
 
 function overwriteBody(status: main.GameStatus, direction: 'cloud-to-local' | 'local-to-cloud') {

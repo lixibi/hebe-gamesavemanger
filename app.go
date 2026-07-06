@@ -1394,7 +1394,7 @@ func (a *App) replaceDirectoryWithBackupProgress(dst string, src string, gameID 
 
 	replaceErr := func() error {
 		if dstExists {
-			if err := os.RemoveAll(dst); err != nil {
+			if err := forceRemoveAll(dst); err != nil {
 				return err
 			}
 		}
@@ -1405,7 +1405,7 @@ func (a *App) replaceDirectoryWithBackupProgress(dst string, src string, gameID 
 	}()
 	if replaceErr != nil {
 		if backup != "" {
-			_ = os.RemoveAll(dst)
+			_ = forceRemoveAll(dst)
 			_ = copyDirectoryVerified(backup, dst)
 		}
 		return "", replaceErr
@@ -2268,6 +2268,24 @@ func directoryTotalBytes(root string) int64 {
 		return nil
 	})
 	return total
+}
+
+func forceRemoveAll(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	_ = filepath.WalkDir(path, func(current string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		mode := os.FileMode(0o666)
+		if d.IsDir() {
+			mode = 0o777
+		}
+		_ = os.Chmod(current, mode)
+		return nil
+	})
+	return os.RemoveAll(path)
 }
 
 func verifyDirectoriesEqual(left string, right string) error {

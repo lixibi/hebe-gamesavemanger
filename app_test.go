@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -301,6 +303,90 @@ func TestSyncGameKeepsLatestFiveBackupsPerGame(t *testing.T) {
 	}
 	if count != maxBackupsPerGame {
 		t.Fatalf("expected %d backups, got %d", maxBackupsPerGame, count)
+	}
+}
+
+func TestRemoteCloudToLocalOverwritesLocalDirectory(t *testing.T) {
+	root := t.TempDir()
+	cloudDir := filepath.Join(root, "remote", "bg3")
+	writeTestFile(t, filepath.Join(cloudDir, "slot.sav"), "cloud-version")
+	writeTestFile(t, filepath.Join(cloudDir, "profile", "new.dat"), "cloud-new")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/games":
+			_ = json.NewEncoder(w).Encode(cloudGamesResponse{Games: []cloudGameConfig{{
+				ID:         "bg3",
+				Name:       "Baldur's Gate 3",
+				FolderName: "bg3",
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/games/bg3/archive":
+			var archive bytes.Buffer
+			if err := writeTarGz(&archive, cloudDir); err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(archive.Bytes())
+		case r.Method == http.MethodGet && r.URL.Path == "/api/games/bg3/manifest":
+			snapshot, err := scanDirectorySnapshot(cloudDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files := map[string]struct {
+				Hash    string `json:"hash"`
+				Size    int64  `json:"size"`
+				ModTime string `json:"modTime"`
+			}{}
+			for path, file := range snapshot.Files {
+				files[path] = struct {
+					Hash    string `json:"hash"`
+					Size    int64  `json:"size"`
+					ModTime string `json:"modTime"`
+				}{
+					Hash:    file.Hash,
+					Size:    file.Size,
+					ModTime: file.ModTime.Format(time.RFC3339Nano),
+				}
+			}
+			dirs := make([]string, 0, len(snapshot.Dirs))
+			for dir := range snapshot.Dirs {
+				dirs = append(dirs, dir)
+			}
+			_ = json.NewEncoder(w).Encode(cloudManifestResponse{Files: files, Dirs: dirs})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	app := newTestApp(t, root)
+	game := GameConfig{
+		ID:            "bg3",
+		Name:          "Baldur's Gate 3",
+		FolderName:    "bg3",
+		LocalSavePath: filepath.Join(root, "local", "bg3"),
+	}
+	if err := app.saveConfig(Config{CloudServerURL: server.URL, CloudPassword: "hebesave", Games: []GameConfig{game}}); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(game.LocalSavePath, "slot.sav"), "local-version")
+	writeTestFile(t, filepath.Join(game.LocalSavePath, "local-only.sav"), "delete-me")
+
+	result, err := app.SyncGame("bg3", "cloud-to-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.BackupPath == "" {
+		t.Fatal("expected local directory to be backed up before remote overwrite")
+	}
+	if got := readTestFile(t, filepath.Join(game.LocalSavePath, "slot.sav")); got != "cloud-version" {
+		t.Fatalf("expected cloud file to overwrite local file, got %q", got)
+	}
+	if got := readTestFile(t, filepath.Join(game.LocalSavePath, "profile", "new.dat")); got != "cloud-new" {
+		t.Fatalf("expected cloud-only file to be downloaded, got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(game.LocalSavePath, "local-only.sav")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected local-only file to be removed, err=%v", err)
 	}
 }
 

@@ -825,7 +825,6 @@ function App() {
                 <div className="context-menu" style={{left: contextMenu.x, top: contextMenu.y}} onClick={(event) => event.stopPropagation()}>
                     <button onClick={editSelectedGame}><Pencil size={15}/> 编辑配置</button>
                     <button onClick={() => openGamePath('local')}><FolderOpen size={15}/> 打开本地存档</button>
-                    <button onClick={() => openGamePath('cloud')}><FolderOpen size={15}/> 打开云端文件夹</button>
                     <button onClick={() => openGamePath('game')} disabled={!contextMenu.status.game.gameExePath}><FolderOpen size={15}/> 打开游戏目录</button>
                     <button onClick={() => exportGameConfig(contextMenu.status)}><FileDown size={15}/> 导出游戏配置</button>
                     <hr/>

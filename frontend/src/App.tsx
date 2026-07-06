@@ -108,6 +108,7 @@ function App() {
     const [selectedId, setSelectedId] = useState('');
     const [form, setForm] = useState<main.GameConfig>(emptyGame);
     const [busy, setBusy] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState('');
     const [notice, setNotice] = useState('');
     const [error, setError] = useState('');
     const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -183,9 +184,10 @@ function App() {
         });
     }, []);
 
-    async function run<T>(task: () => Promise<T>, onSuccess?: (value: T) => void | Promise<void>, showBusy = true) {
+    async function run<T>(task: () => Promise<T>, onSuccess?: (value: T) => void | Promise<void>, showBusy = true, message = '正在加载中') {
         if (showBusy) {
             setBusy(true);
+            setLoadingMessage(message);
         }
         setError('');
         try {
@@ -196,6 +198,7 @@ function App() {
         } finally {
             if (showBusy) {
                 setBusy(false);
+                setLoadingMessage('');
             }
         }
     }
@@ -261,7 +264,7 @@ function App() {
             if (!selectedId && !configOpen && state.games.length > 0) {
                 chooseGame(state.games[0]);
             }
-        }, showBusy);
+        }, showBusy, '正在刷新状态');
     }
 
     function chooseGame(status: main.GameStatus) {
@@ -270,6 +273,17 @@ function App() {
         setCompareResult(null);
         setNotice('');
         setError('');
+    }
+
+    async function selectGame(status: main.GameStatus) {
+        chooseGame(status);
+        await run(GetAppState, (state) => {
+            setAppState(state);
+            const refreshed = state.games.find((item) => item.game.id === status.game.id);
+            if (refreshed) {
+                chooseGame(refreshed);
+            }
+        }, true, '正在切换游戏');
     }
 
     function createNewGame() {
@@ -313,7 +327,7 @@ function App() {
                 setNotice('配置已保存');
                 appendLog(`已保存 ${payload.name} 配置`);
             }
-        });
+        }, true, '正在保存配置');
     }
 
     function requestSync(direction: 'cloud-to-local' | 'local-to-cloud') {
@@ -361,7 +375,7 @@ function App() {
             const launchText = launchAfter ? '，并已发送启动命令' : '';
             setNotice(result.backupPath ? `覆盖完成，原目录已备份到 ${result.backupPath}${launchText}` : `覆盖完成${launchText}`);
             appendLog(direction === 'cloud-to-local' ? '已下载云端到本地' : '已上传本地到云端');
-        });
+        }, true, direction === 'cloud-to-local' ? '正在下载并覆盖本地存档' : '正在上传本地存档');
         window.setTimeout(() => setTransferProgress(null), 1400);
     }
 
@@ -582,7 +596,7 @@ function App() {
         await run(() => CreateManualBackup(selectedStatus.game.id), (backup) => {
             setNotice(`本地备份完成：${backup.name}`);
             appendLog(`已创建 ${selectedStatus.game.name} 本地备份`);
-        });
+        }, true, '正在备份当前存档');
     }
 
     async function openBackups(mode: BackupMode) {
@@ -598,7 +612,7 @@ function App() {
             : request(), (items) => {
             setBackups(items);
             setBackupOpen(true);
-        });
+        }, true, mode === 'cloud' ? '正在打开云端备份列表' : '正在打开本地备份列表');
     }
 
     function requestRestoreBackup(backup: main.BackupInfo) {
@@ -653,7 +667,7 @@ function App() {
                         <button
                             key={status.game.id}
                             className={`game-row ${selectedId === status.game.id ? 'active' : ''}`}
-                            onClick={() => chooseGame(status)}
+                            onClick={() => void selectGame(status)}
                             onContextMenu={(event) => showContextMenu(event, status)}
                         >
                             {status.iconData ? (
@@ -869,6 +883,18 @@ function App() {
                                     {item.label}
                                 </button>
                             ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {busy && loadingMessage && (
+                <div className="loading-backdrop">
+                    <div className="loading-card">
+                        <strong>{loadingMessage}</strong>
+                        <span>请稍等，正在处理存档数据</span>
+                        <div className="loading-bar">
+                            <div/>
                         </div>
                     </div>
                 </div>

@@ -828,6 +828,61 @@ button:disabled {
     justify-content: flex-start;
 }
 
+.loading-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 32;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: rgba(20, 22, 26, 0.28);
+    backdrop-filter: blur(2px);
+}
+
+.loading-card {
+    display: grid;
+    gap: 9px;
+    width: min(320px, 100%);
+    padding: 16px;
+    border: 1px solid rgba(38, 42, 49, 0.12);
+    border-radius: 8px;
+    background: #fffefa;
+    box-shadow: 0 22px 70px rgba(20, 22, 26, 0.24);
+}
+
+.loading-card strong {
+    font-size: 15px;
+}
+
+.loading-card span {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.loading-bar {
+    height: 7px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e9e4da;
+}
+
+.loading-bar div {
+    width: 42%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--blue), var(--teal));
+    animation: loading-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes loading-slide {
+    0% {
+        transform: translateX(-110%);
+    }
+    100% {
+        transform: translateX(250%);
+    }
+}
+
 .transfer-toast {
     position: fixed;
     right: 12px;

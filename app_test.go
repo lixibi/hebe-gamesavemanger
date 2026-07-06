@@ -311,6 +311,7 @@ func TestRemoteCloudToLocalOverwritesLocalDirectory(t *testing.T) {
 	cloudDir := filepath.Join(root, "remote", "bg3")
 	writeTestFile(t, filepath.Join(cloudDir, "slot.sav"), "cloud-version")
 	writeTestFile(t, filepath.Join(cloudDir, "profile", "new.dat"), "cloud-new")
+	writeTestFile(t, filepath.Join(cloudDir, "same.dat"), "same")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -371,6 +372,12 @@ func TestRemoteCloudToLocalOverwritesLocalDirectory(t *testing.T) {
 	}
 	writeTestFile(t, filepath.Join(game.LocalSavePath, "slot.sav"), "local-version")
 	writeTestFile(t, filepath.Join(game.LocalSavePath, "local-only.sav"), "delete-me")
+	samePath := filepath.Join(game.LocalSavePath, "same.dat")
+	writeTestFile(t, samePath, "same")
+	unchangedTime := time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(samePath, unchangedTime, unchangedTime); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := app.SyncGame("bg3", "cloud-to-local")
 	if err != nil {
@@ -387,6 +394,11 @@ func TestRemoteCloudToLocalOverwritesLocalDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(game.LocalSavePath, "local-only.sav")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected local-only file to be removed, err=%v", err)
+	}
+	if info, err := os.Stat(samePath); err != nil {
+		t.Fatal(err)
+	} else if !info.ModTime().Equal(unchangedTime) {
+		t.Fatalf("expected identical file to be skipped, got modtime %s", info.ModTime())
 	}
 }
 

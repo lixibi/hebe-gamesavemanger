@@ -1385,20 +1385,13 @@ func (a *App) replaceDirectoryWithBackupProgress(dst string, src string, gameID 
 		return "", err
 	}
 
-	stage := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".gsm-staging-"+time.Now().Format("20060102150405"))
-	_ = os.RemoveAll(stage)
-	if err := copyDirectoryVerifiedWithProgress(src, stage, progress); err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(stage)
-
 	replaceErr := func() error {
-		if dstExists {
-			if err := forceRemoveAll(dst); err != nil {
+		if !dstExists {
+			if err := os.MkdirAll(dst, 0o755); err != nil {
 				return err
 			}
 		}
-		if err := os.Rename(stage, dst); err != nil {
+		if err := syncDirectoryDifferential(src, dst, progress); err != nil {
 			return err
 		}
 		return verifyDirectoriesEqual(src, dst)
@@ -2254,6 +2247,86 @@ func copyDirectoryVerifiedWithProgress(src string, dst string, progress func(del
 	return verifyDirectoriesEqual(src, dst)
 }
 
+func syncDirectoryDifferential(src string, dst string, progress func(delta int64, rel string)) error {
+	srcSnapshot, err := scanDirectorySnapshot(src)
+	if err != nil {
+		return err
+	}
+	dstSnapshot, err := scanDirectorySnapshot(dst)
+	if err != nil {
+		return err
+	}
+
+	dirs := make([]string, 0, len(srcSnapshot.Dirs))
+	for dir := range srcSnapshot.Dirs {
+		dirs = append(dirs, dir)
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		if len(dirs[i]) == len(dirs[j]) {
+			return dirs[i] < dirs[j]
+		}
+		return len(dirs[i]) < len(dirs[j])
+	})
+	for _, dir := range dirs {
+		if err := os.MkdirAll(filepath.Join(dst, filepath.FromSlash(dir)), 0o755); err != nil {
+			return err
+		}
+	}
+
+	for rel := range dstSnapshot.Files {
+		if _, ok := srcSnapshot.Files[rel]; ok {
+			continue
+		}
+		if err := forceRemovePath(filepath.Join(dst, filepath.FromSlash(rel))); err != nil {
+			return err
+		}
+	}
+
+	files := make([]string, 0, len(srcSnapshot.Files))
+	for rel := range srcSnapshot.Files {
+		files = append(files, rel)
+	}
+	sort.Strings(files)
+	for _, rel := range files {
+		srcFile := srcSnapshot.Files[rel]
+		if dstFile, ok := dstSnapshot.Files[rel]; ok && dstFile.Hash == srcFile.Hash && dstFile.Size == srcFile.Size {
+			continue
+		}
+
+		sourcePath := filepath.Join(src, filepath.FromSlash(rel))
+		targetPath := filepath.Join(dst, filepath.FromSlash(rel))
+		info, err := os.Stat(sourcePath)
+		if err != nil {
+			return err
+		}
+		if err := copyFileWithProgress(sourcePath, targetPath, info.Mode(), rel, progress); err != nil {
+			return err
+		}
+		if err := os.Chtimes(targetPath, info.ModTime(), info.ModTime()); err != nil {
+			return err
+		}
+	}
+
+	extraDirs := make([]string, 0)
+	for dir := range dstSnapshot.Dirs {
+		if _, ok := srcSnapshot.Dirs[dir]; !ok {
+			extraDirs = append(extraDirs, dir)
+		}
+	}
+	sort.Slice(extraDirs, func(i, j int) bool {
+		if len(extraDirs[i]) == len(extraDirs[j]) {
+			return extraDirs[i] > extraDirs[j]
+		}
+		return len(extraDirs[i]) > len(extraDirs[j])
+	})
+	for _, dir := range extraDirs {
+		if err := forceRemovePath(filepath.Join(dst, filepath.FromSlash(dir))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func directoryTotalBytes(root string) int64 {
 	var total int64
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
@@ -2285,6 +2358,11 @@ func forceRemoveAll(path string) error {
 		_ = os.Chmod(current, mode)
 		return nil
 	})
+	return os.RemoveAll(path)
+}
+
+func forceRemovePath(path string) error {
+	_ = os.Chmod(path, 0o777)
 	return os.RemoveAll(path)
 }
 

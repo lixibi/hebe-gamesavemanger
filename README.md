@@ -1,170 +1,254 @@
-# hebe游戏存档同步
+# Hebe Game Save Manager / hebe游戏存档同步
 
-Wails 前端 + Go 后端的游戏存档管理器。`dev` 分支开始移除 Syncthing 依赖，改为连接自建的轻量 Go 云存档服务，对比本地/云端存档差异，并在确认后执行双向覆盖。
+Self-hosted game save manager for Windows players. Run a tiny Go save server on your NAS or VPS, then use the Windows x64 desktop client to compare, back up, upload, download, and launch games with safer save handling.
 
-## 目录约定
+一个适合 NAS 自部署的游戏存档同步项目：服务端是轻量 Go 文件服务，推荐用 Docker 跑在 NAS 上；客户端是 Windows x64 桌面程序，用来管理本地游戏存档、云端备份、双向覆盖和游戏启动。
 
-把 Windows 版本放到同一个应用目录中运行：
+> Default server password: `hebesave`. Change it after the first successful connection.
+>
+> 服务端默认密码：`hebesave`。首次连接成功后建议立刻在客户端里修改。
+
+## Features / 功能
+
+- No Syncthing dependency. The client talks directly to the self-hosted Hebe save server.
+- Full-folder save sync: every file, extensionless file, hidden file, nested directory, and empty directory is considered.
+- SHA-256 manifest comparison for local/cloud differences.
+- Safer overwrite: before replacing a save folder, the destination is backed up first.
+- Faster overwrite: unchanged files are skipped; only changed/missing files are copied, and stale target files are removed.
+- Local backups and cloud backups are separated. Each game keeps the latest 5 backups.
+- Windows game launcher supports `.exe`, launch arguments, and `steam://` URLs.
+- Game list can use the configured `.exe` icon on Windows.
+- GitHub Actions builds Windows x64 client, Linux x64 server, and a Docker image.
+
+## Architecture / 架构
+
+```text
+Windows PC
+  hebe-game-save-sync.exe
+  config/games.json          # local-only paths and cloud settings
+  backups/<game>/            # local backups
+
+NAS / VPS / Home server
+  Docker: ghcr.io/lixibi/hebe-save-server:latest
+  /data/<gameIdentifier>/    # current cloud save files
+  /data/.backups/<game>/     # latest 5 cloud backups
+  /data/.hebe-games.json     # password and cloud game list
+```
+
+Only game name, game id, and game identifier are stored on the server. Local save paths and game executable paths stay on each Windows client.
+
+云端只保存游戏名、游戏 ID、游戏标识名和存档文件。本机存档路径、游戏 exe 路径、启动参数只保存在当前 Windows 客户端。
+
+## Quick Start / 快速开始
+
+### 1. Deploy the server on NAS with Docker / 在 NAS 上用 Docker 部署服务端
+
+Create a persistent folder first, for example `/volume1/docker/hebesave` on Synology or `/mnt/user/appdata/hebesave` on Unraid.
+
+先准备一个持久化目录，例如群晖 `/volume1/docker/hebesave`，Unraid `/mnt/user/appdata/hebesave`。
+
+```bash
+docker run -d \
+  --name hebe-save-server \
+  --restart unless-stopped \
+  -p 27843:27843 \
+  -v /volume1/docker/hebesave:/data \
+  ghcr.io/lixibi/hebe-save-server:latest
+```
+
+If your NAS uses another path, only change the left side of `-v`:
+
+如果你的 NAS 路径不同，只需要改 `-v` 左边：
+
+```bash
+-v /your/nas/folder/hebesave:/data
+```
+
+Health check:
+
+```bash
+curl http://NAS_IP:27843/health
+```
+
+Optional environment variables:
+
+```bash
+docker run -d \
+  --name hebe-save-server \
+  --restart unless-stopped \
+  -e HEBE_SAVE_ADDR=:27843 \
+  -e HEBE_SAVE_ROOT=/data \
+  -p 27843:27843 \
+  -v /volume1/docker/hebesave:/data \
+  ghcr.io/lixibi/hebe-save-server:latest
+```
+
+You can also put the server behind a reverse proxy. The Windows client accepts both `http://ip:27843` and a reverse-proxy URL such as `https://save.example.com`.
+
+也可以通过反代访问。客户端支持 `http://ip:27843`，也支持 `https://save.example.com` 这种不带端口的反代地址。
+
+### 2. Download the Windows x64 client / 下载 Windows x64 客户端
+
+Download `hebe-game-save-sync-windows-x64.exe` from GitHub Releases.
+
+从 GitHub Releases 下载 `hebe-game-save-sync-windows-x64.exe`。
+
+Run it from any folder you like. The app will create local config and backup folders next to the executable.
+
+把 exe 放到任意目录运行即可。程序会在 exe 同级目录自动创建配置和本地备份目录。
 
 ```text
 HebeGameSaveSync/
   hebe-game-save-sync.exe
-  data/
-    bg3/
-      <本地缓存，可自动生成>
-  config/
-    games.json
+  config/games.json
   backups/
+  cache/
 ```
 
-云端服务的数据目录按 `云存档根目录/<folderName>` 保存游戏原始存档结构，备份按 `云存档根目录/.backups/<folderName>` 保存。
+### 3. Connect the client / 连接客户端
 
-## 配置文件
+Open cloud settings in the lower-left area:
 
-程序会自动创建 `config/games.json`：
+在客户端左下角打开云端配置：
 
-```json
-{
-  "cloudServerURL": "http://127.0.0.1:27843",
-  "games": [
-    {
-      "id": "bg3",
-      "name": "博德之门3",
-      "folderName": "bg3",
-      "localSavePath": "C:\\Users\\you\\AppData\\Local\\Larian Studios\\Baldur's Gate 3\\PlayerProfiles\\Public\\Savegames\\Story",
-      "gameExePath": "D:\\Games\\Baldurs Gate 3\\bin\\bg3_dx11.exe",
-      "gameArgs": "-windowed"
-    }
-  ]
-}
-```
+- Server URL / 云端地址: `http://NAS_IP:27843`
+- Password / 连接密码: `hebesave`
+- Click test, then save / 点击测试连接，然后保存
+- Change the server password after connecting / 连接成功后修改服务端密码
 
-`cloudServerURL`、`cloudPassword`、本机存档路径、游戏启动目标和启动参数都只保存在当前客户端。云端只保存游戏名、游戏 ID、游戏标识名，方便另一台电脑连接云服务后自动下发游戏列表，再分别设置该电脑自己的本地路径。
+### 4. Add a game / 添加游戏
 
-服务端默认密码是 `hebesave`，明文保存在云端数据目录的 `.hebe-games.json` 里。客户端连接时需要填写云地址和密码；连接成功后，可以在客户端修改服务端密码。
+In the client:
 
-云端路径会映射为服务端：
+客户端中填写：
 
-```text
-<cloud-root>/<folderName>
-```
+- Game name / 游戏名: `Baldur's Gate 3`
+- Game identifier / 游戏标识名: `bg3`
+- Local save folder / 本机存档目录: the game's real save directory
+- Launch target / 启动目标: game `.exe` or `steam://rungameid/<appid>`
+- Auto upload mode / 自动上传方式: manual, ask on exit, upload on exit, or interval upload
 
-例如上面的配置对应服务端数据目录里的 `bg3`，程序会把该游戏的所有存档文件和子目录原样上传到这个文件夹里。
+When adding a game, the game list is saved to the server, but local paths are kept only on the current PC.
 
-## 云存档服务
+新增游戏时会把游戏列表保存到云端，但本机路径只保存在当前电脑。
 
-默认端口：`27843`。
+## Backup And Sync Rules / 备份与同步规则
 
-Docker 运行：
+- The app recursively scans the full save folder.
+- File identity is based on relative path, size, and SHA-256 hash.
+- Newer-side hints use added files, removed files, changed content, and modified time.
+- Access time is ignored because antivirus, indexing, and scanning can change it.
+- Upload local: replaces the cloud save with local files. The server backs up the previous cloud save first.
+- Download cloud: replaces the local save with cloud files. The client backs up the previous local save first.
+- Differential overwrite skips identical files and only copies changed/missing files.
+- Files that exist only on the target side are removed so the target matches the source.
+- Each game keeps the latest 5 local backups and latest 5 cloud backups.
+- Restore local backup writes only to the local save folder. It does not automatically upload to cloud.
+- Restore cloud backup writes only to the cloud save folder. It does not automatically download to local.
 
-```bash
-docker build -f Dockerfile.save-server -t hebe-save-server .
-docker run -d --name hebe-save-server \
-  -p 27843:27843 \
-  -v /path/to/cloud-saves:/data \
-  hebe-save-server
-```
+## Server API / 服务端 API
 
-也可以直接运行：
+All API routes except `GET /health` require:
 
-```bash
-go run ./cmd/save-server -addr :27843 -root ./cloud-saves
-```
-
-服务端除 `GET /health` 外，API 都需要请求头：
+除了 `GET /health`，其它接口都需要请求头：
 
 ```text
 X-Hebe-Password: hebesave
 ```
 
-服务端提供：
+Main routes:
 
-- `GET /health`：健康检查。
-- `GET /api/games`：列出云端游戏目录。
-- `PUT /api/password`：修改服务端密码，需要先用当前密码认证。
-- `PUT /api/games/{game}/config`：保存云端游戏配置，不包含任何客户端本地路径。
-- `GET /api/games/{game}/manifest`：列出文件 hash、大小、修改时间。
-- `GET /api/games/{game}/archive`：下载云端存档 tar.gz。
-- `PUT /api/games/{game}/archive`：上传本地存档 tar.gz，服务端替换前自动备份旧云端。
-- `GET /api/games/{game}/backups`：列出云端最近 5 个备份。
-- `POST /api/games/{game}/backups`：手动创建云端备份。
-- `POST /api/games/{game}/backups/restore/{backup}`：把云端备份还原为当前云端存档。
+```text
+GET  /health
+GET  /api/games
+PUT  /api/password
+PUT  /api/games/{game}/config
+GET  /api/games/{game}/manifest
+GET  /api/games/{game}/archive
+PUT  /api/games/{game}/archive
+GET  /api/games/{game}/backups
+POST /api/games/{game}/backups
+POST /api/games/{game}/backups/restore/{backup}
+```
 
-## 同步策略
+## Build From Source / 从源码构建
 
-- 递归扫描本地存档目录和云端目录下的所有文件，不按扩展名过滤，按相对路径 + SHA-256 判断是否一致。
-- 变化判断来自本地目录扫描和云服务 manifest，不依赖 Syncthing 的文件变化事件。
-- 新旧判断结合新增文件、缺失文件、同名文件内容变化、文件修改时间；双方都有变化时标记为冲突，不自动猜测。
-- 文件访问时间不作为覆盖依据，因为扫描和杀毒软件都可能更新访问时间，容易制造误判。
-- 云端覆盖本地、本地覆盖云端都必须在界面中二次确认，并显示推断的新旧方、判断依据、来源目录、目标目录。
-- 本地覆盖前会把目标目录完整复制到 `backups/<gameId>/<time>_<direction>`，并校验备份与原目录一致；云端覆盖前由服务端备份到 `.backups/<game>`。
-- 备份按游戏分组保存到 `backups/<gameId>/`，每个游戏只保留最新 5 个备份。
-- 真正覆盖时会先复制到临时目录并校验，再替换目标目录；失败时会尝试从备份恢复。
-- 文件校验覆盖任意扩展名文件、无扩展名文件、隐藏文件、多层子目录文件，并保留空目录。
-- 启动游戏前如果本地/云端不一致，界面会提示当前游戏将读取本地存档，并要求选择是否先用云端覆盖本地。
-- 删除游戏配置不会删除本地存档，也不会删除 `data/` 下的云端目录。
+Requirements:
 
-## 操作入口
+- Go 1.23+
+- Node.js 22+
+- pnpm
+- Wails v2.12+
 
-- 左侧游戏列表支持右键菜单。
-- 右键可编辑配置、导出游戏配置、打开本地存档目录、打开云端文件夹、打开游戏目录、备份当前存档、还原备份、刷新、启动游戏、删除配置。
-- 新增游戏窗口支持导入导出的 JSON 配置，方便迁移到另一台电脑后再确认本地路径并保存。
-- 配置窗口支持用系统选择器选择本机存档文件夹和游戏程序文件，也可以把启动目标填写为 `steam://rungameid/<appid>` 这类协议地址，并可填写启动参数。
-- 左侧可设置云服务地址和密码，支持直接填写 `IP:27843`，也支持反代地址不带端口；点击测试连接会验证密码，保存后会重新下发云端游戏列表。
-- 新增或保存游戏会把游戏名、ID、游戏标识名保存到云端；如果已设置本机存档目录，会检查目录中文件数，文件数为 0 会阻止首次上传并提示用户。
-- 手动备份会备份当前本地游戏存档目录。
-- 还原备份只还原到本地游戏存档目录，不会直接写云端；需要同步到云端时，再点击“上传本地”。
-- 通过本程序启动游戏后会追踪游戏进程。游戏关闭时如果检测到本地存档较新，可配置为询问上传或自动上传。
-- 每个游戏可配置上传方式：关闭自动上传完全手动、关闭后询问上传、关闭后自动上传、运行中定时上传。
-- 自动上传只在本地明确较新时执行；每次游戏会话第一次自动上传会备份云端，后续自动上传不重复备份同一会话。
-
-## Windows 兼容
-
-- Windows 路径会原样保存到 `config/games.json`，例如 `C:\Users\you\AppData\Local\...`。
-- Windows 下直接启动配置的游戏程序并传入启动参数，后台命令不会弹出额外 cmd 窗口；`steam://` 等协议地址会交给系统打开。
-- 游戏启动目标是 `.exe` 时，Windows 客户端会自动提取 exe 图标并缓存，用作左侧游戏列表图标。
-- 客户端默认连接 `http://127.0.0.1:27843`，可在 `config/games.json` 的 `cloudServerURL` 修改为 NAS 或公网服务地址。
-- 程序启用单实例锁，重复打开会唤起已有窗口，不再多开。
-
-## 开发
+Install Wails:
 
 ```bash
-export NVM_DIR="$HOME/.nvm"
-. "$NVM_DIR/nvm.sh"
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+```
 
+Run in development:
+
+```bash
 pnpm --dir frontend install
 wails dev
 ```
 
-## 构建
-
-macOS 当前机器构建：
-
-```bash
-wails build -clean
-```
-
-Windows amd64 构建：
+Build Windows x64 client:
 
 ```bash
 wails build -platform windows/amd64 -clean
 ```
 
-服务端 Linux amd64 构建：
-
-```bash
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/bin/hebe-save-server ./cmd/save-server
-```
-
-本项目已在 macOS 上成功构建 Windows 目标，输出为：
+Output:
 
 ```text
 build/bin/hebe-game-save-sync.exe
 ```
 
-## 验证
+Build Linux x64 server:
 
 ```bash
-go test ./...
-pnpm --dir frontend run build
+mkdir -p build/bin
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/bin/hebe-save-server-linux-x64 ./cmd/save-server
 ```
+
+Build Docker image locally:
+
+```bash
+docker build -f Dockerfile.save-server -t hebe-save-server:local .
+```
+
+## GitHub Actions / 自动构建
+
+The workflow in `.github/workflows/release.yml` builds:
+
+- Windows x64 client artifact
+- Linux x64 server artifact
+- Docker image: `ghcr.io/lixibi/hebe-save-server:latest`
+- GitHub Release assets when pushing a tag like `v1.0.0`
+
+`.github/workflows/release.yml` 会自动构建：
+
+- Windows x64 客户端
+- Linux x64 服务端
+- Docker 镜像：`ghcr.io/lixibi/hebe-save-server:latest`
+- 推送 `v1.0.0` 这类 tag 时自动创建 GitHub Release 附件
+
+Create a release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+## Notes / 注意
+
+- This tool overwrites real game saves. Always check the source and target before confirming upload or download.
+- Keep the NAS data folder backed up if your saves are important.
+- Do not expose the server directly to the public internet without HTTPS and a strong password.
+- The default password is intentionally simple for first boot only. Change it.
+
+- 这是会真实覆盖游戏存档的工具，上传/下载前请确认来源和目标。
+- 重要存档建议 NAS 侧再做一层快照或备份。
+- 不建议裸奔暴露到公网；如需公网访问，请使用 HTTPS 反代和强密码。
+- 默认密码只是方便首次启动，请尽快修改。

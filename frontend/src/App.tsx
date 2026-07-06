@@ -139,10 +139,10 @@ function App() {
     const isOfflineMode = appState?.cloudStatus === 'offline';
 
     useEffect(() => {
-        void refresh();
+        void refresh(false);
         const timer = window.setInterval(() => void refresh(false), 5000);
         return () => window.clearInterval(timer);
-    }, [selectedId, configOpen]);
+    }, [configOpen]);
 
     useEffect(() => {
         setCloudUrl(appState?.cloudServerURL ?? '');
@@ -283,7 +283,7 @@ function App() {
             if (refreshed) {
                 chooseGame(refreshed);
             }
-        }, true, '正在切换游戏');
+        }, false);
     }
 
     function createNewGame() {
@@ -889,11 +889,11 @@ function App() {
             )}
 
             {busy && loadingMessage && (
-                <div className="loading-backdrop">
-                    <div className="loading-card">
+                <div className="busy-toast">
+                    <div className="busy-card">
                         <strong>{loadingMessage}</strong>
-                        <span>请稍等，正在处理存档数据</span>
-                        <div className="loading-bar">
+                        <span>后台处理中</span>
+                        <div className="busy-bar">
                             <div/>
                         </div>
                     </div>

@@ -1,4 +1,4 @@
-import {FormEvent, MouseEvent, useEffect, useMemo, useState} from 'react';
+import {FormEvent, MouseEvent, useEffect, useMemo, useRef, useState} from 'react';
 import {
     CloudDownload,
     CloudUpload,
@@ -125,6 +125,7 @@ function App() {
     const [activityLog, setActivityLog] = useState<string[]>(['等待操作']);
     const [compareResult, setCompareResult] = useState<main.CompareResult | null>(null);
     const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
+    const selectedIdRef = useRef('');
 
     const selectedStatus = useMemo(() => {
         return appState?.games?.find((item) => item.game.id === selectedId) ?? null;
@@ -143,6 +144,10 @@ function App() {
         const timer = window.setInterval(() => void refresh(false), 5000);
         return () => window.clearInterval(timer);
     }, [configOpen]);
+
+    useEffect(() => {
+        selectedIdRef.current = selectedId;
+    }, [selectedId]);
 
     useEffect(() => {
         setCloudUrl(appState?.cloudServerURL ?? '');
@@ -261,8 +266,13 @@ function App() {
     async function refresh(showBusy = true) {
         await run(GetAppState, (state) => {
             setAppState(state);
-            if (!selectedId && !configOpen && state.games.length > 0) {
+            const currentSelectedId = selectedIdRef.current;
+            if (!currentSelectedId && !configOpen && state.games.length > 0) {
                 chooseGame(state.games[0]);
+                return;
+            }
+            if (currentSelectedId && !state.games.some((item) => item.game.id === currentSelectedId)) {
+                setSelectedId('');
             }
         }, showBusy, '正在刷新状态');
     }
